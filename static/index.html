@@ -67,9 +67,18 @@
 
   .empty{padding:40px;text-align:center;color:var(--sub);}
   .disclaimer{font-size:12px;color:var(--sub);margin:10px 0 20px;line-height:1.5;}
+
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);
+    background:var(--ink);color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;
+    font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.2);opacity:0;pointer-events:none;
+    transition:opacity .2s ease, transform .2s ease;z-index:100;display:flex;align-items:center;gap:8px;}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+  .toast .check{color:#5fd39a;font-weight:800;}
 </style>
 </head>
 <body>
+
+<div id="toast" class="toast"><span class="check">&check;</span> <span id="toastMsg">Address Copied</span></div>
 
 <header>
   <div class="brand"><span class="dot"></span> REIX Foreclosure Finder</div>
@@ -160,6 +169,63 @@ function qs(params){
   return Object.entries(params).filter(([k,v])=>v!=="" && v!=null).map(([k,v])=>`${k}=${encodeURIComponent(v)}`).join("&");
 }
 
+function escapeAttr(str){
+  return String(str).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+// Appends the property address as a query param so app.reix.co can read it
+// on load and pre-fill its own search box. Param name is `search` -- see
+// the note in README.md about wiring this up on the REIX app side.
+function reixUrlFor(address){
+  const base = REIX_URL.endsWith("/") ? REIX_URL : REIX_URL + "/";
+  return address ? `${base}?search=${encodeURIComponent(address)}` : base;
+}
+
+let toastTimer;
+function showToast(msg){
+  const toast = document.getElementById("toast");
+  document.getElementById("toastMsg").textContent = msg;
+  toast.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=> toast.classList.remove("show"), 2000);
+}
+
+async function copyText(text){
+  try{
+    await navigator.clipboard.writeText(text);
+    return true;
+  }catch(e){
+    // Fallback for browsers/contexts without Clipboard API access
+    try{
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      return true;
+    }catch(e2){
+      return false;
+    }
+  }
+}
+
+// Delegated click handler: covers both the list table (re-rendered each
+// search) and Leaflet map popups (added to the DOM dynamically), so one
+// listener on document handles "View on REIX" everywhere.
+document.addEventListener("click", async (e)=>{
+  const btn = e.target.closest(".view-btn");
+  if(!btn) return;
+  const address = btn.getAttribute("data-address");
+  if(address){
+    const ok = await copyText(address);
+    showToast(ok ? "Address Copied" : "Couldn't copy address");
+  }
+  // No preventDefault -- the link still opens REIX in a new tab as normal.
+});
+
 async function loadMeta(){
   const res = await fetch("/api/public/meta");
   const data = await res.json();
@@ -189,6 +255,7 @@ function renderRows(rows){
     <th>Filed</th><th></th>
   </tr></thead><tbody>`;
   rows.forEach(r=>{
+    const addr = r.full_address || r.address || "";
     html += `<tr>
       <td>${r.county || "--"}</td>
       <td><span class="pill ${r.type}">${r.type}</span></td>
@@ -197,7 +264,7 @@ function renderRows(rows){
       <td>${r.zip || "--"}</td>
       <td><a class="doclink" href="${r.doc_link}" target="_blank" rel="noopener">${r.doc_number}</a></td>
       <td>${fmtMonth(r.year, r.month)}</td>
-      <td><a class="view-btn" href="${REIX_URL}" target="_blank" rel="noopener">View on REIX</a></td>
+      <td><a class="view-btn" href="${reixUrlFor(addr)}" target="_blank" rel="noopener" data-address="${escapeAttr(addr)}">View on REIX</a></td>
     </tr>`;
   });
   html += `</tbody></table>`;
@@ -232,9 +299,10 @@ async function loadMap(){
   const pts = [];
   data.results.forEach(r=>{
     if(r.lat && r.lon){
+      const addr = r.full_address || r.address || "";
       const color = r.type === 'tax' ? '#b3541e' : '#0f6e5c';
       const marker = L.circleMarker([r.lat, r.lon], {radius:6, color, fillColor:color, fillOpacity:0.8});
-      marker.bindPopup(`<b>${r.address||'--'}</b><br>${r.city||''} ${r.zip||''} &middot; ${r.county||''} County<br>Doc #${r.doc_number}<br><a href="${REIX_URL}" target="_blank">View on REIX</a>`);
+      marker.bindPopup(`<b>${r.address||'--'}</b><br>${r.city||''} ${r.zip||''} &middot; ${r.county||''} County<br>Doc #${r.doc_number}<br><a href="${reixUrlFor(addr)}" target="_blank" rel="noopener" class="view-btn" data-address="${escapeAttr(addr)}">View on REIX</a>`);
       marker.addTo(markersLayer);
       pts.push([r.lat, r.lon]);
     }
