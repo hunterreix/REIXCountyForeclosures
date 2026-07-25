@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: reix-foreclosures
+    runtime: python
+    plan: starter
+    buildCommand: "pip install -r requirements.txt && python db.py"
+    startCommand: "gunicorn -w 4 -b 0.0.0.0:$PORT app:app"
+    envVars:
+      - key: REIX_DB_PATH
+        value: /var/data/reix_foreclosures.db
+      - key: REIX_SYNC_SECRET
+        generateValue: true   # Render will generate a random secret for you
+    disk:
+      name: reix-data
+      mountPath: /var/data
+      sizeGB: 1

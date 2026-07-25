@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Texas Foreclosure Notices | powered by REIX</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root{
+    --ink:#1b1f24; --sub:#5b6470; --line:#e4e7eb; --bg:#f7f8fa;
+    --accent:#0f6e5c; --accent-dark:#0b5748; --card:#ffffff;
+    --tax:#b3541e; --mortgage:#0f6e5c;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);}
+  header{background:var(--card);border-bottom:1px solid var(--line);padding:14px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:20;}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;}
+  .brand span.dot{width:10px;height:10px;border-radius:50%;background:var(--accent);display:inline-block;}
+  header a.cta{background:var(--accent);color:#fff;padding:9px 16px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;}
+  header a.cta:hover{background:var(--accent-dark);}
+  .sub-bar{padding:6px 20px 0;font-size:12px;color:var(--sub);}
+  .sub-bar a{color:var(--accent);text-decoration:none;font-weight:600;}
+
+  .wrap{max-width:1080px;margin:0 auto;padding:20px;}
+  .tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--line);}
+  .tabs button{background:none;border:none;padding:10px 16px;font-size:14px;font-weight:600;color:var(--sub);cursor:pointer;border-bottom:2px solid transparent;}
+  .tabs button.active{color:var(--accent);border-bottom-color:var(--accent);}
+
+  .toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;}
+  .toolbar input, .toolbar select{padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:#fff;}
+  .toolbar input[type=text]{flex:1;min-width:200px;}
+  .toolbar button.search-btn{background:var(--ink);color:#fff;border:none;padding:9px 16px;border-radius:8px;font-weight:600;cursor:pointer;}
+
+  .summary-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
+  .card .num{font-size:26px;font-weight:800;}
+  .card .lbl{font-size:12px;color:var(--sub);text-transform:uppercase;letter-spacing:.04em;}
+
+  .bars{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:20px;}
+  .bars h3{margin:0 0 12px;font-size:14px;color:var(--sub);text-transform:uppercase;letter-spacing:.04em;}
+  .bar-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:13px;}
+  .bar-row .label{width:130px;flex-shrink:0;color:var(--sub);}
+  .bar-track{flex:1;background:var(--bg);border-radius:6px;overflow:hidden;height:16px;}
+  .bar-fill{height:100%;background:var(--accent);}
+  .bar-row .count{width:40px;text-align:right;font-weight:700;}
+
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;}
+  thead th{background:#fafbfc;text-align:left;font-size:12px;color:var(--sub);text-transform:uppercase;letter-spacing:.03em;padding:10px 12px;border-bottom:1px solid var(--line);}
+  tbody td{padding:12px;border-bottom:1px solid var(--line);font-size:14px;vertical-align:top;}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr:hover{background:#fbfdfc;}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;color:#fff;text-transform:capitalize;}
+  .pill.mortgage{background:var(--mortgage);}
+  .pill.tax{background:var(--tax);}
+  a.doclink{color:var(--accent);text-decoration:none;font-weight:600;}
+  a.doclink:hover{text-decoration:underline;}
+  .view-btn{background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:700;text-decoration:none;white-space:nowrap;}
+
+  .pager{display:flex;justify-content:center;align-items:center;gap:14px;padding:16px 0;font-size:14px;}
+  .pager button{border:1px solid var(--line);background:#fff;padding:7px 14px;border-radius:8px;cursor:pointer;}
+  .pager button:disabled{opacity:.4;cursor:default;}
+
+  #map{height:560px;border-radius:12px;border:1px solid var(--line);}
+
+  footer{text-align:center;padding:30px 20px 50px;color:var(--sub);font-size:13px;}
+  footer a{color:var(--accent);font-weight:600;text-decoration:none;}
+
+  .empty{padding:40px;text-align:center;color:var(--sub);}
+  .disclaimer{font-size:12px;color:var(--sub);margin:10px 0 20px;line-height:1.5;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand"><span class="dot"></span> REIX Foreclosure Finder</div>
+  <a class="cta" href="https://app.reix.co/" target="_blank" rel="noopener">Open Full App on REIX →</a>
+</header>
+<div class="sub-bar">Texas foreclosure notices &middot; sourced directly from participating county clerk systems &middot; <a href="/docs">Free API for developers</a></div>
+
+<div class="wrap">
+
+  <div class="tabs">
+    <button class="active" data-tab="list">List</button>
+    <button data-tab="map">Map</button>
+    <button data-tab="summary">Summary</button>
+  </div>
+
+  <div class="toolbar">
+    <input type="text" id="q" placeholder="Search address, ZIP, or doc number...">
+    <select id="county"><option value="">All counties</option></select>
+    <select id="type">
+      <option value="">All types</option>
+      <option value="mortgage">Mortgage</option>
+      <option value="tax">Tax</option>
+    </select>
+    <select id="city"><option value="">All cities</option></select>
+    <button class="search-btn" id="searchBtn">Search</button>
+  </div>
+
+  <p class="disclaimer">
+    Data is pulled directly from each participating county's public foreclosure notice
+    system and refreshed on a schedule; it is provided for informational/lead-generation
+    purposes only and is not a substitute for official county records. Full property detail,
+    saved searches, and alerts are available in the
+    <a href="https://app.reix.co/" target="_blank" rel="noopener">REIX app</a>.
+  </p>
+
+  <div id="view-list">
+    <div id="listContainer"></div>
+    <div class="pager">
+      <button id="prevBtn">&larr; Prev</button>
+      <span id="pageInfo"></span>
+      <button id="nextBtn">Next &rarr;</button>
+    </div>
+  </div>
+
+  <div id="view-map" style="display:none;">
+    <div id="map"></div>
+    <p class="disclaimer">Map pins require coordinates from the source county; some counties
+      publish addresses without lat/lon and will show up in List/Summary but not here yet.</p>
+  </div>
+
+  <div id="view-summary" style="display:none;">
+    <div class="summary-cards" id="summaryCards"></div>
+    <div class="bars">
+      <h3>By County</h3>
+      <div id="countyBars"></div>
+    </div>
+    <div class="bars">
+      <h3>Top Cities</h3>
+      <div id="cityBars"></div>
+    </div>
+    <div class="bars">
+      <h3>Notices by Month</h3>
+      <div id="monthBars"></div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  Built by <a href="https://app.reix.co/" target="_blank" rel="noopener">REIX</a> &mdash;
+  find, track, and act on distressed properties before everyone else.
+  <br><a href="https://app.reix.co/" target="_blank" rel="noopener">app.reix.co</a>
+</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const REIX_URL = "https://app.reix.co/";
+let state = { page: 1, per_page: 25, q: "", type: "", city: "", county: "" };
+let map, markersLayer;
+
+function fmtMonth(y,m){
+  if(!y || !m) return "--";
+  const d = new Date(y, m-1, 1);
+  return d.toLocaleString('en-US',{month:'short'}) + " " + y;
+}
+
+function qs(params){
+  return Object.entries(params).filter(([k,v])=>v!=="" && v!=null).map(([k,v])=>`${k}=${encodeURIComponent(v)}`).join("&");
+}
+
+async function loadMeta(){
+  const res = await fetch("/api/public/meta");
+  const data = await res.json();
+  const citySel = document.getElementById("city");
+  data.cities.forEach(c=>{
+    const opt = document.createElement("option");
+    opt.value = c; opt.textContent = c;
+    citySel.appendChild(opt);
+  });
+  const countySel = document.getElementById("county");
+  data.counties.forEach(c=>{
+    const opt = document.createElement("option");
+    opt.value = c; opt.textContent = c + " County";
+    countySel.appendChild(opt);
+  });
+}
+
+function renderRows(rows){
+  const container = document.getElementById("listContainer");
+  if(!rows.length){
+    container.innerHTML = `<div class="empty">No properties match that search.</div>`;
+    return;
+  }
+  let html = `<table><thead><tr>
+    <th>County</th><th>Type</th><th>Address</th><th>City</th><th>ZIP</th>
+    <th title="Will link to the recorded courthouse document">Doc #</th>
+    <th>Filed</th><th></th>
+  </tr></thead><tbody>`;
+  rows.forEach(r=>{
+    html += `<tr>
+      <td>${r.county || "--"}</td>
+      <td><span class="pill ${r.type}">${r.type}</span></td>
+      <td>${r.address || "--"}</td>
+      <td>${r.city || "--"}</td>
+      <td>${r.zip || "--"}</td>
+      <td><a class="doclink" href="${r.doc_link}" target="_blank" rel="noopener">${r.doc_number}</a></td>
+      <td>${fmtMonth(r.year, r.month)}</td>
+      <td><a class="view-btn" href="${REIX_URL}" target="_blank" rel="noopener">View on REIX</a></td>
+    </tr>`;
+  });
+  html += `</tbody></table>`;
+  container.innerHTML = html;
+}
+
+async function loadList(){
+  const params = {
+    page: state.page, per_page: state.per_page,
+    q: state.q, type: state.type, city: state.city, county: state.county
+  };
+  const res = await fetch(`/api/public/properties?${qs(params)}`);
+  const data = await res.json();
+  renderRows(data.results);
+  document.getElementById("pageInfo").textContent = `Page ${data.page} of ${data.total_pages} (${data.total} total)`;
+  document.getElementById("prevBtn").disabled = data.page <= 1;
+  document.getElementById("nextBtn").disabled = data.page >= data.total_pages;
+}
+
+async function loadMap(){
+  if(!map){
+    map = L.map('map').setView([31.0, -99.0], 6); // Texas-wide default
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+    markersLayer = L.layerGroup().addTo(map);
+  }
+  markersLayer.clearLayers();
+  const params = { page:1, per_page:100, q: state.q, type: state.type, city: state.city, county: state.county };
+  const res = await fetch(`/api/public/properties?${qs(params)}`);
+  const data = await res.json();
+  const pts = [];
+  data.results.forEach(r=>{
+    if(r.lat && r.lon){
+      const color = r.type === 'tax' ? '#b3541e' : '#0f6e5c';
+      const marker = L.circleMarker([r.lat, r.lon], {radius:6, color, fillColor:color, fillOpacity:0.8});
+      marker.bindPopup(`<b>${r.address||'--'}</b><br>${r.city||''} ${r.zip||''} &middot; ${r.county||''} County<br>Doc #${r.doc_number}<br><a href="${REIX_URL}" target="_blank">View on REIX</a>`);
+      marker.addTo(markersLayer);
+      pts.push([r.lat, r.lon]);
+    }
+  });
+  if(pts.length){
+    map.fitBounds(pts, {padding:[30,30], maxZoom:12});
+  }
+}
+
+function barRow(label, count, max){
+  const pct = max ? Math.max(4, Math.round((count/max)*100)) : 0;
+  return `<div class="bar-row"><div class="label">${label}</div><div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div><div class="count">${count}</div></div>`;
+}
+
+async function loadSummary(){
+  const res = await fetch("/api/public/stats/summary");
+  const d = await res.json();
+
+  const mortgage = d.by_type.find(t=>t.type==='mortgage')?.c || 0;
+  const tax = d.by_type.find(t=>t.type==='tax')?.c || 0;
+
+  document.getElementById("summaryCards").innerHTML = `
+    <div class="card"><div class="num">${d.total_properties}</div><div class="lbl">Total Notices</div></div>
+    <div class="card"><div class="num">${mortgage}</div><div class="lbl">Mortgage</div></div>
+    <div class="card"><div class="num">${tax}</div><div class="lbl">Tax</div></div>
+    <div class="card"><div class="num">${d.by_county.length}</div><div class="lbl">Counties</div></div>
+    <div class="card"><div class="num">${d.top_cities.length}</div><div class="lbl">Cities Covered</div></div>
+  `;
+
+  const maxCounty = Math.max(...d.by_county.map(c=>c.c), 1);
+  document.getElementById("countyBars").innerHTML = d.by_county.map(c=>barRow(c.county + " County", c.c, maxCounty)).join("") || "<p>No data yet.</p>";
+
+  const maxCity = Math.max(...d.top_cities.map(c=>c.c), 1);
+  document.getElementById("cityBars").innerHTML = d.top_cities.map(c=>barRow(c.city, c.c, maxCity)).join("") || "<p>No data yet.</p>";
+
+  const maxMonth = Math.max(...d.by_month.map(m=>m.c), 1);
+  document.getElementById("monthBars").innerHTML = d.by_month.map(m=>barRow(fmtMonth(m.year,m.month), m.c, maxMonth)).join("") || "<p>No data yet.</p>";
+}
+
+// tab switching
+document.querySelectorAll(".tabs button").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    document.querySelectorAll(".tabs button").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active");
+    ["list","map","summary"].forEach(t=>{
+      document.getElementById(`view-${t}`).style.display = (t===btn.dataset.tab) ? "block" : "none";
+    });
+    if(btn.dataset.tab === "map") loadMap();
+    if(btn.dataset.tab === "summary") loadSummary();
+  });
+});
+
+document.getElementById("searchBtn").addEventListener("click", ()=>{
+  state.page = 1;
+  state.q = document.getElementById("q").value;
+  state.type = document.getElementById("type").value;
+  state.city = document.getElementById("city").value;
+  state.county = document.getElementById("county").value;
+  loadList();
+});
+document.getElementById("q").addEventListener("keydown", e=>{ if(e.key==="Enter") document.getElementById("searchBtn").click(); });
+document.getElementById("prevBtn").addEventListener("click", ()=>{ if(state.page>1){ state.page--; loadList(); }});
+document.getElementById("nextBtn").addEventListener("click", ()=>{ state.page++; loadList(); });
+
+loadMeta();
+loadList();
+</script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>REIX Foreclosure API Docs</title>
+<style>
+  :root{--ink:#1b1f24;--sub:#5b6470;--line:#e4e7eb;--bg:#f7f8fa;--accent:#0f6e5c;--card:#fff;}
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.6;}
+  header{background:var(--card);border-bottom:1px solid var(--line);padding:14px 20px;display:flex;justify-content:space-between;align-items:center;}
+  .brand{font-weight:700;font-size:18px;}
+  header a.cta{background:var(--accent);color:#fff;padding:9px 16px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;}
+  .wrap{max-width:820px;margin:0 auto;padding:30px 20px 80px;}
+  h1{font-size:28px;margin-bottom:6px;}
+  h2{font-size:19px;margin-top:40px;border-bottom:1px solid var(--line);padding-bottom:8px;}
+  p.lead{color:var(--sub);font-size:16px;}
+  code, pre{background:#0f1115;color:#d8e2e0;border-radius:8px;}
+  code{padding:2px 6px;font-size:13px;}
+  pre{padding:16px;overflow-x:auto;font-size:13px;}
+  table{width:100%;border-collapse:collapse;margin:14px 0;}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);font-size:14px;}
+  th{color:var(--sub);font-size:12px;text-transform:uppercase;}
+  .badge{display:inline-block;background:#eef4f2;color:var(--accent);font-weight:700;font-size:12px;padding:2px 8px;border-radius:6px;margin-right:6px;}
+  .note{background:#fff8ec;border:1px solid #f0e0b8;padding:12px 14px;border-radius:8px;font-size:14px;}
+  footer{text-align:center;color:var(--sub);font-size:13px;padding:30px;}
+  footer a{color:var(--accent);font-weight:600;text-decoration:none;}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">REIX Foreclosure API</div>
+  <a class="cta" href="https://app.reix.co/" target="_blank" rel="noopener">app.reix.co →</a>
+</header>
+<div class="wrap">
+  <h1>REIX Foreclosure API</h1>
+  <p class="lead">Live mortgage &amp; tax foreclosure notices for Bexar County, TX — sourced from the
+  County Clerk's public feed, cleaned up, and served as simple JSON. Free to use. Get a key in one request.</p>
+
+  <h2>1. Get an API key</h2>
+  <p>No sign-up form, no waiting — post your name/email (optional) and get a key back instantly:</p>
+  <pre>curl -X POST https://YOUR-DOMAIN/api/v1/keys \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Acme Real Estate App", "email": "dev@acme.com"}'</pre>
+  <p>Response:</p>
+  <pre>{
+  "api_key": "reix_AbCdEf123...",
+  "usage": "Send this as the 'X-API-Key' header on requests to /api/v1/*",
+  "docs": "/docs"
+}</pre>
+  <div class="note">Keep your key private. It's tied to a usage counter, not a hard rate limit today —
+  but please be reasonable (poll hourly at most; the underlying county data refreshes on that cadence anyway).</div>
+
+  <h2>2. Authenticate requests</h2>
+  <pre>curl https://YOUR-DOMAIN/api/v1/properties \
+  -H "X-API-Key: reix_AbCdEf123..."</pre>
+
+  <h2>3. Endpoints</h2>
+  <table>
+    <tr><th>Method &amp; Path</th><th>Description</th></tr>
+    <tr><td><span class="badge">GET</span>/api/v1/properties</td><td>Search &amp; list foreclosure notices</td></tr>
+    <tr><td><span class="badge">GET</span>/api/v1/properties/:id</td><td>Single property record</td></tr>
+    <tr><td><span class="badge">GET</span>/api/v1/stats/summary</td><td>Counts by type, city, month</td></tr>
+    <tr><td><span class="badge">GET</span>/api/v1/meta</td><td>Valid filter values (cities, types)</td></tr>
+    <tr><td><span class="badge">POST</span>/api/v1/keys</td><td>Create a new API key</td></tr>
+  </table>
+
+  <h2>4. Query parameters (GET /api/v1/properties)</h2>
+  <table>
+    <tr><th>Param</th><th>Type</th><th>Notes</th></tr>
+    <tr><td>county</td><td>string</td><td><code>Bexar</code> or <code>Collin</code> (more counties added over time; see <code>/api/v1/meta</code>)</td></tr>
+    <tr><td>q</td><td>string</td><td>Matches against address, doc number, or ZIP</td></tr>
+    <tr><td>type</td><td>string</td><td><code>mortgage</code> or <code>tax</code></td></tr>
+    <tr><td>city</td><td>string</td><td>Exact city name, see <code>/api/v1/meta</code></td></tr>
+    <tr><td>zip</td><td>string</td><td>Exact ZIP code</td></tr>
+    <tr><td>year</td><td>int</td><td>Filing year</td></tr>
+    <tr><td>month</td><td>int</td><td>Filing month (1-12)</td></tr>
+    <tr><td>doc_number</td><td>string</td><td>Exact county document number</td></tr>
+    <tr><td>page</td><td>int</td><td>Default 1</td></tr>
+    <tr><td>per_page</td><td>int</td><td>Default 25, max 100</td></tr>
+  </table>
+
+  <div class="note"><b>full_address</b> is a computed field &mdash; the county only gives us
+  separate <code>address</code>, <code>city</code>, and <code>zip</code> values (no state field,
+  since this feed is Bexar County, TX only). We concatenate them for you so you don't have to.</div>
+
+  <h2>5. Sample response</h2>
+  <pre>{
+  "results": [
+    {
+      "id": 4821,
+      "county": "Bexar",
+      "type": "mortgage",
+      "doc_number": "20260012345",
+      "address": "123 EXAMPLE ST",
+      "full_address": "123 EXAMPLE ST, SAN ANTONIO, TX 78201",
+      "city": "SAN ANTONIO",
+      "zip": "78201",
+      "school_dist": "SAN ANTONIO ISD",
+      "year": 2026,
+      "month": 8,
+      "lat": 29.451,
+      "lon": -98.521,
+      "doc_link": "https://bexar.tx.publicsearch.us/results?searchType=quickSearch&query=20260012345",
+      "first_seen": "2026-07-01T04:00:00",
+      "last_seen": "2026-07-24T04:00:00",
+      "reix_link": "https://app.reix.co/"
+    }
+  ],
+  "page": 1,
+  "per_page": 25,
+  "total": 812,
+  "total_pages": 33
+}</pre>
+
+  <h2>6. Attribution &amp; fair use</h2>
+  <p>This feed is a convenience layer on top of Bexar County's public foreclosure notice data.
+  It's provided for informational and lead-generation purposes, not as a substitute for the official
+  County Clerk record. If you build something with it, a link back to
+  <a href="https://app.reix.co/" target="_blank" rel="noopener">app.reix.co</a> is appreciated but not required.</p>
+</div>
+<footer>
+  <a href="https://app.reix.co/" target="_blank" rel="noopener">app.reix.co</a>
+</footer>
+</body>
+</html>
