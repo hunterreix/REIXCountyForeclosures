@@ -1,371 +1,438 @@
-"""
-app.py - REIX Bexar County Foreclosure API + simple web app.
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Texas Foreclosure Notices | powered by REIX</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root{
+    --ink:#1b1f24; --sub:#5b6470; --line:#e4e7eb; --bg:#f7f8fa;
+    --accent:#0f6e5c; --accent-dark:#0b5748; --card:#ffffff;
+    --tax:#b3541e; --mortgage:#0f6e5c;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);}
+  header{background:var(--card);border-bottom:1px solid var(--line);padding:14px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:20;}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;}
+  .brand span.dot{width:10px;height:10px;border-radius:50%;background:var(--accent);display:inline-block;}
+  header a.cta{background:var(--accent);color:#fff;padding:9px 16px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;}
+  header a.cta:hover{background:var(--accent-dark);}
+  .sub-bar{padding:6px 20px 0;font-size:12px;color:var(--sub);}
+  .sub-bar a{color:var(--accent);text-decoration:none;font-weight:600;}
 
-Two layers live in the same Flask app:
+  .wrap{max-width:1080px;margin:0 auto;padding:20px;}
+  .tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--line);}
+  .tabs button{background:none;border:none;padding:10px 16px;font-size:14px;font-weight:600;color:var(--sub);cursor:pointer;border-bottom:2px solid transparent;}
+  .tabs button.active{color:var(--accent);border-bottom-color:var(--accent);}
 
-1. Public, unauthenticated, rate-limited-by-nothing-fancy endpoints under
-   /api/public/* -- used ONLY by our own web app (static/index.html) so
-   visitors don't need to sign up for a key just to browse the list.
+  .toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;}
+  .toolbar input, .toolbar select{padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:#fff;}
+  .toolbar input[type=text]{flex:1;min-width:200px;}
+  .toolbar button.search-btn{background:var(--ink);color:#fff;border:none;padding:9px 16px;border-radius:8px;font-weight:600;cursor:pointer;}
 
-2. Developer-facing endpoints under /api/v1/* -- require an API key
-   (header: X-API-Key). Any outside app/team can self-serve a key at
-   POST /api/v1/keys -- no approval step, so it's frictionless to plug in.
+  .summary-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
+  .card .num{font-size:26px;font-weight:800;}
+  .card .lbl{font-size:12px;color:var(--sub);text-transform:uppercase;letter-spacing:.04em;}
 
-Every response is small, flat JSON. No auth ceremony beyond the header.
-"""
-import datetime as dt
-import math
-import secrets
+  .bars{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:20px;}
+  .bars h3{margin:0 0 12px;font-size:14px;color:var(--sub);text-transform:uppercase;letter-spacing:.04em;}
+  .bar-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:13px;}
+  .bar-row .label{width:130px;flex-shrink:0;color:var(--sub);}
+  .bar-track{flex:1;background:var(--bg);border-radius:6px;overflow:hidden;height:16px;}
+  .bar-fill{height:100%;background:var(--accent);}
+  .bar-row .count{width:40px;text-align:right;font-weight:700;}
 
-from flask import Flask, jsonify, request, send_from_directory
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;}
+  thead th{background:#fafbfc;text-align:left;font-size:12px;color:var(--sub);text-transform:uppercase;letter-spacing:.03em;padding:10px 12px;border-bottom:1px solid var(--line);}
+  tbody td{padding:12px;border-bottom:1px solid var(--line);font-size:14px;vertical-align:top;}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr:hover{background:#fbfdfc;}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;color:#fff;text-transform:capitalize;}
+  .pill.mortgage{background:var(--mortgage);}
+  .pill.tax{background:var(--tax);}
+  a.doclink{color:var(--accent);text-decoration:none;font-weight:600;}
+  a.doclink:hover{text-decoration:underline;}
+  .view-btn{background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:700;text-decoration:none;white-space:nowrap;}
 
-from db import get_conn, init_db
+  .pager{display:flex;justify-content:center;align-items:center;gap:14px;padding:16px 0;font-size:14px;}
+  .pager button{border:1px solid var(--line);background:#fff;padding:7px 14px;border-radius:8px;cursor:pointer;}
+  .pager button:disabled{opacity:.4;cursor:default;}
 
-app = Flask(__name__, static_folder="static", static_url_path="")
+  #map{height:560px;border-radius:12px;border:1px solid var(--line);}
 
-# Ensure the schema exists whenever this module is imported -- including
-# under gunicorn, which imports `app:app` directly and never runs the
-# `if __name__ == "__main__"` block below. Safe to call repeatedly
-# (CREATE TABLE IF NOT EXISTS).
-init_db()
+  footer{text-align:center;padding:30px 20px 50px;color:var(--sub);font-size:13px;}
+  footer a{color:var(--accent);font-weight:600;text-decoration:none;}
 
+  .empty{padding:40px;text-align:center;color:var(--sub);}
+  .disclaimer{font-size:12px;color:var(--sub);margin:10px 0 20px;line-height:1.5;}
 
-@app.after_request
-def add_cors_headers(resp):
-    """Manual CORS (no flask-cors dependency) so third-party apps can call
-    /api/v1/* directly from browser JS."""
-    resp.headers["Access-Control-Allow-Origin"] = "*"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-API-Key"
-    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    return resp
+  .history-table{width:100%;border-collapse:collapse;font-size:13px;}
+  .history-table th{text-align:left;color:var(--sub);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line);font-size:11px;text-transform:uppercase;letter-spacing:.03em;}
+  .history-table td{padding:6px 8px;border-bottom:1px solid var(--line);}
+  .history-table tr:last-child td{border-bottom:none;}
+  .status-ok{color:var(--accent);font-weight:700;}
+  .status-error{color:#c0392b;font-weight:700;}
 
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);
+    background:var(--ink);color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;
+    font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.2);opacity:0;pointer-events:none;
+    transition:opacity .2s ease, transform .2s ease;z-index:100;display:flex;align-items:center;gap:8px;}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+  .toast .check{color:#5fd39a;font-weight:800;}
+</style>
+</head>
+<body>
 
-@app.route("/api/<path:_any>", methods=["OPTIONS"])
-def cors_preflight(_any):
-    return ("", 204)
+<div id="toast" class="toast"><span class="check">&check;</span> <span id="toastMsg">Address Copied</span></div>
 
-REIX_URL = "https://app.reix.co/"
-MAX_PER_PAGE = 100
-DEFAULT_PER_PAGE = 25
+<header>
+  <div class="brand"><span class="dot"></span> REIX Foreclosure Finder</div>
+  <a class="cta" href="https://app.reix.co/" target="_blank" rel="noopener">Open Full App on REIX →</a>
+</header>
+<div class="sub-bar">Texas foreclosure notices &middot; sourced directly from participating county clerk systems &middot; <a href="/docs">Free API for developers</a></div>
 
+<div class="wrap">
 
-# --------------------------------------------------------------------------
-# Helpers
-# --------------------------------------------------------------------------
+  <div class="tabs">
+    <button class="active" data-tab="list">List</button>
+    <button data-tab="map">Map</button>
+    <button data-tab="summary">Summary</button>
+  </div>
 
-def build_full_address(address, city, zip_code):
-    """Assemble a single mailing-address string from the county's separate
-    address/city/zip fields. Texas is hardcoded since this feed is Bexar
-    County (TX) only -- the source data has no state field."""
-    parts = [p for p in [(address or "").strip()] if p]
-    city_state_zip = ", ".join(p for p in [(city or "").strip()] if p)
-    if city_state_zip:
-        city_state_zip += ", TX"
-    else:
-        city_state_zip = "TX"
-    if zip_code:
-        city_state_zip += f" {zip_code}"
-    parts.append(city_state_zip)
-    return ", ".join(parts) if parts[0] else city_state_zip
+  <div class="toolbar">
+    <input type="text" id="q" placeholder="Search address, ZIP, or doc number...">
+    <select id="county"><option value="">All counties</option></select>
+    <select id="type">
+      <option value="">All types</option>
+      <option value="mortgage">Mortgage</option>
+      <option value="tax">Tax</option>
+    </select>
+    <select id="city"><option value="">All cities</option></select>
+    <button class="search-btn" id="searchBtn">Search</button>
+  </div>
 
+  <p class="disclaimer">
+    Data is pulled directly from each participating county's public foreclosure notice
+    system and refreshed on a schedule; it is provided for informational/lead-generation
+    purposes only and is not a substitute for official county records. Full property detail,
+    saved searches, and alerts are available in the
+    <a href="https://app.reix.co/" target="_blank" rel="noopener">REIX app</a>.
+  </p>
 
-def row_to_dict(row):
-    d = dict(row)
-    d["full_address"] = build_full_address(d.get("address"), d.get("city"), d.get("zip"))
-    d["reix_link"] = REIX_URL
-    return d
+  <div id="view-list">
+    <div id="listContainer"></div>
+    <div class="pager">
+      <button id="prevBtn">&larr; Prev</button>
+      <span id="pageInfo"></span>
+      <button id="nextBtn">Next &rarr;</button>
+    </div>
+  </div>
 
+  <div id="view-map" style="display:none;">
+    <div id="map"></div>
+    <p class="disclaimer">Map pins require coordinates from the source county; some counties
+      publish addresses without lat/lon and will show up in List/Summary but not here yet.</p>
+  </div>
 
-def build_filters(args):
-    """Shared query-building logic for both public and v1 endpoints."""
-    clauses = []
-    params = []
+  <div id="view-summary" style="display:none;">
+    <div class="summary-cards" id="summaryCards"></div>
+    <p id="lastSynced" class="disclaimer" style="margin-top:-8px;"></p>
+    <div class="bars">
+      <h3>By County</h3>
+      <div id="countyBars"></div>
+    </div>
+    <div class="bars">
+      <h3>Top Cities</h3>
+      <div id="cityBars"></div>
+    </div>
+    <div class="bars">
+      <h3>Notices by Month</h3>
+      <div id="monthBars"></div>
+    </div>
+    <div class="bars">
+      <h3>Data Refresh History</h3>
+      <div id="syncHistory"></div>
+    </div>
+  </div>
 
-    county = args.get("county", "").strip()
-    if county:
-        clauses.append("county = ?")
-        params.append(county)
+</div>
 
-    q = args.get("q", "").strip()
-    if q:
-        clauses.append("(address LIKE ? OR doc_number LIKE ? OR zip LIKE ?)")
-        like = f"%{q}%"
-        params += [like, like, like]
+<footer>
+  Built by <a href="https://app.reix.co/" target="_blank" rel="noopener">REIX</a> &mdash;
+  find, track, and act on distressed properties before everyone else.
+  <br><a href="https://app.reix.co/" target="_blank" rel="noopener">app.reix.co</a>
+</footer>
 
-    ptype = args.get("type", "").strip().lower()
-    if ptype in ("mortgage", "tax"):
-        clauses.append("source_layer = ?")
-        params.append(ptype)
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const REIX_URL = "https://app.reix.co/";
+let state = { page: 1, per_page: 25, q: "", type: "", city: "", county: "" };
+let map, markersLayer;
 
-    city = args.get("city", "").strip()
-    if city:
-        clauses.append("city = ?")
-        params.append(city)
+function fmtMonth(y,m){
+  if(!y || !m) return "--";
+  const d = new Date(y, m-1, 1);
+  return d.toLocaleString('en-US',{month:'short'}) + " " + y;
+}
 
-    zip_code = args.get("zip", "").strip()
-    if zip_code:
-        clauses.append("zip = ?")
-        params.append(zip_code)
+function fmtDateTime(isoStr){
+  if(!isoStr) return "--";
+  // Stored as naive UTC ISO strings (no "Z"); tell the browser explicitly
+  // it's UTC so it converts to the viewer's local time correctly.
+  const iso = isoStr.endsWith("Z") ? isoStr : isoStr + "Z";
+  const d = new Date(iso);
+  if(isNaN(d)) return isoStr;
+  return d.toLocaleString('en-US', {dateStyle:'medium', timeStyle:'short'});
+}
 
-    year = args.get("year", "").strip()
-    if year.isdigit():
-        clauses.append("year = ?")
-        params.append(int(year))
+function fmtRelative(isoStr){
+  if(!isoStr) return "";
+  const iso = isoStr.endsWith("Z") ? isoStr : isoStr + "Z";
+  const d = new Date(iso);
+  if(isNaN(d)) return "";
+  const diffMs = Date.now() - d.getTime();
+  const mins = Math.round(diffMs / 60000);
+  if(mins < 1) return "just now";
+  if(mins < 60) return `${mins} min${mins===1?'':'s'} ago`;
+  const hours = Math.round(mins / 60);
+  if(hours < 24) return `${hours} hour${hours===1?'':'s'} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days===1?'':'s'} ago`;
+}
 
-    month = args.get("month", "").strip()
-    if month.isdigit():
-        clauses.append("month = ?")
-        params.append(int(month))
+function qs(params){
+  return Object.entries(params).filter(([k,v])=>v!=="" && v!=null).map(([k,v])=>`${k}=${encodeURIComponent(v)}`).join("&");
+}
 
-    doc_number = args.get("doc_number", "").strip()
-    if doc_number:
-        clauses.append("doc_number = ?")
-        params.append(doc_number)
+function escapeAttr(str){
+  return String(str).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
 
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    return where, params
+// Appends the property address as a query param so app.reix.co can read it
+// on load and pre-fill its own search box. Param name is `search` -- see
+// the note in README.md about wiring this up on the REIX app side.
+function reixUrlFor(address){
+  const base = REIX_URL.endsWith("/") ? REIX_URL : REIX_URL + "/";
+  return address ? `${base}?search=${encodeURIComponent(address)}` : base;
+}
 
+let toastTimer;
+function showToast(msg){
+  const toast = document.getElementById("toast");
+  document.getElementById("toastMsg").textContent = msg;
+  toast.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=> toast.classList.remove("show"), 2000);
+}
 
-def paginate_args(args):
-    try:
-        page = max(1, int(args.get("page", 1)))
-    except ValueError:
-        page = 1
-    try:
-        per_page = int(args.get("per_page", DEFAULT_PER_PAGE))
-    except ValueError:
-        per_page = DEFAULT_PER_PAGE
-    per_page = max(1, min(per_page, MAX_PER_PAGE))
-    return page, per_page
-
-
-def query_properties(args):
-    conn = get_conn()
-    where, params = build_filters(args)
-    page, per_page = paginate_args(args)
-    offset = (page - 1) * per_page
-
-    total = conn.execute(f"SELECT COUNT(*) AS c FROM properties {where}", params).fetchone()["c"]
-
-    rows = conn.execute(
-        f"""SELECT id, county, source_layer AS type, doc_number, address, city, zip,
-                   school_dist, year, month, lat, lon, doc_link, first_seen, last_seen
-            FROM properties {where}
-            ORDER BY year DESC, month DESC, id DESC
-            LIMIT ? OFFSET ?""",
-        params + [per_page, offset],
-    ).fetchall()
-    conn.close()
-
-    return {
-        "results": [row_to_dict(r) for r in rows],
-        "page": page,
-        "per_page": per_page,
-        "total": total,
-        "total_pages": max(1, math.ceil(total / per_page)),
+async function copyText(text){
+  try{
+    await navigator.clipboard.writeText(text);
+    return true;
+  }catch(e){
+    // Fallback for browsers/contexts without Clipboard API access
+    try{
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      return true;
+    }catch(e2){
+      return false;
     }
+  }
+}
 
+// Delegated click handler: covers both the list table (re-rendered each
+// search) and Leaflet map popups (added to the DOM dynamically), so one
+// listener on document handles "View on REIX" everywhere.
+document.addEventListener("click", async (e)=>{
+  const btn = e.target.closest(".view-btn");
+  if(!btn) return;
+  const address = btn.getAttribute("data-address");
+  if(address){
+    const ok = await copyText(address);
+    showToast(ok ? "Address Copied" : "Couldn't copy address");
+  }
+  // No preventDefault -- the link still opens REIX in a new tab as normal.
+});
 
-def summary_stats():
-    conn = get_conn()
-    total = conn.execute("SELECT COUNT(*) AS c FROM properties").fetchone()["c"]
-    by_county = conn.execute(
-        "SELECT county, COUNT(*) AS c FROM properties GROUP BY county ORDER BY c DESC"
-    ).fetchall()
-    by_type = conn.execute(
-        "SELECT source_layer AS type, COUNT(*) AS c FROM properties GROUP BY source_layer"
-    ).fetchall()
-    by_city = conn.execute(
-        "SELECT city, COUNT(*) AS c FROM properties WHERE city != '' GROUP BY city ORDER BY c DESC LIMIT 10"
-    ).fetchall()
-    by_month = conn.execute(
-        """SELECT year, month, COUNT(*) AS c FROM properties
-           WHERE year IS NOT NULL AND month IS NOT NULL
-           GROUP BY year, month ORDER BY year DESC, month DESC LIMIT 12"""
-    ).fetchall()
-    last_run = conn.execute(
-        """SELECT run_at, layer AS county, fetched, inserted, updated, status, message
-           FROM scrape_log ORDER BY id DESC LIMIT 25"""
-    ).fetchall()
-    most_recent = conn.execute(
-        "SELECT run_at FROM scrape_log ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    conn.close()
+async function loadMeta(){
+  const res = await fetch("/api/public/meta");
+  const data = await res.json();
+  const citySel = document.getElementById("city");
+  data.cities.forEach(c=>{
+    const opt = document.createElement("option");
+    opt.value = c; opt.textContent = c;
+    citySel.appendChild(opt);
+  });
+  const countySel = document.getElementById("county");
+  data.counties.forEach(c=>{
+    const opt = document.createElement("option");
+    opt.value = c; opt.textContent = c + " County";
+    countySel.appendChild(opt);
+  });
+}
 
-    return {
-        "total_properties": total,
-        "by_county": [dict(r) for r in by_county],
-        "by_type": [dict(r) for r in by_type],
-        "top_cities": [dict(r) for r in by_city],
-        "by_month": [dict(r) for r in by_month],
-        "last_sync_at": most_recent["run_at"] if most_recent else None,
-        "sync_history": [dict(r) for r in last_run],
-        "reix_link": REIX_URL,
+function renderRows(rows){
+  const container = document.getElementById("listContainer");
+  if(!rows.length){
+    container.innerHTML = `<div class="empty">No properties match that search.</div>`;
+    return;
+  }
+  let html = `<table><thead><tr>
+    <th>County</th><th>Type</th><th>Address</th><th>City</th><th>ZIP</th>
+    <th title="Will link to the recorded courthouse document">Doc #</th>
+    <th>Filed</th><th></th>
+  </tr></thead><tbody>`;
+  rows.forEach(r=>{
+    const addr = r.full_address || r.address || "";
+    html += `<tr>
+      <td>${r.county || "--"}</td>
+      <td><span class="pill ${r.type}">${r.type}</span></td>
+      <td>${r.address || "--"}</td>
+      <td>${r.city || "--"}</td>
+      <td>${r.zip || "--"}</td>
+      <td><a class="doclink" href="${r.doc_link}" target="_blank" rel="noopener">${r.doc_number}</a></td>
+      <td>${fmtMonth(r.year, r.month)}</td>
+      <td><a class="view-btn" href="${reixUrlFor(addr)}" target="_blank" rel="noopener" data-address="${escapeAttr(addr)}">View on REIX</a></td>
+    </tr>`;
+  });
+  html += `</tbody></table>`;
+  container.innerHTML = html;
+}
+
+async function loadList(){
+  const params = {
+    page: state.page, per_page: state.per_page,
+    q: state.q, type: state.type, city: state.city, county: state.county
+  };
+  const res = await fetch(`/api/public/properties?${qs(params)}`);
+  const data = await res.json();
+  renderRows(data.results);
+  document.getElementById("pageInfo").textContent = `Page ${data.page} of ${data.total_pages} (${data.total} total)`;
+  document.getElementById("prevBtn").disabled = data.page <= 1;
+  document.getElementById("nextBtn").disabled = data.page >= data.total_pages;
+}
+
+async function loadMap(){
+  if(!map){
+    map = L.map('map').setView([31.0, -99.0], 6); // Texas-wide default
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+    markersLayer = L.layerGroup().addTo(map);
+  }
+  markersLayer.clearLayers();
+  const params = { page:1, per_page:100, q: state.q, type: state.type, city: state.city, county: state.county };
+  const res = await fetch(`/api/public/properties?${qs(params)}`);
+  const data = await res.json();
+  const pts = [];
+  data.results.forEach(r=>{
+    if(r.lat && r.lon){
+      const addr = r.full_address || r.address || "";
+      const color = r.type === 'tax' ? '#b3541e' : '#0f6e5c';
+      const marker = L.circleMarker([r.lat, r.lon], {radius:6, color, fillColor:color, fillOpacity:0.8});
+      marker.bindPopup(`<b>${r.address||'--'}</b><br>${r.city||''} ${r.zip||''} &middot; ${r.county||''} County<br>Doc #${r.doc_number}<br><a href="${reixUrlFor(addr)}" target="_blank" rel="noopener" class="view-btn" data-address="${escapeAttr(addr)}">View on REIX</a>`);
+      marker.addTo(markersLayer);
+      pts.push([r.lat, r.lon]);
     }
+  });
+  if(pts.length){
+    map.fitBounds(pts, {padding:[30,30], maxZoom:12});
+  }
+}
 
+function barRow(label, count, max){
+  const pct = max ? Math.max(4, Math.round((count/max)*100)) : 0;
+  return `<div class="bar-row"><div class="label">${label}</div><div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div><div class="count">${count}</div></div>`;
+}
 
-def meta_options():
-    conn = get_conn()
-    cities = [r["city"] for r in conn.execute(
-        "SELECT DISTINCT city FROM properties WHERE city != '' ORDER BY city"
-    ).fetchall()]
-    counties = [r["county"] for r in conn.execute(
-        "SELECT DISTINCT county FROM properties ORDER BY county"
-    ).fetchall()]
-    conn.close()
-    return {"types": ["mortgage", "tax"], "cities": cities, "counties": counties}
+async function loadSummary(){
+  const res = await fetch("/api/public/stats/summary");
+  const d = await res.json();
 
+  const mortgage = d.by_type.find(t=>t.type==='mortgage')?.c || 0;
+  const tax = d.by_type.find(t=>t.type==='tax')?.c || 0;
 
-# --------------------------------------------------------------------------
-# API key auth (for /api/v1/*)
-# --------------------------------------------------------------------------
+  document.getElementById("summaryCards").innerHTML = `
+    <div class="card"><div class="num">${d.total_properties}</div><div class="lbl">Total Notices</div></div>
+    <div class="card"><div class="num">${mortgage}</div><div class="lbl">Mortgage</div></div>
+    <div class="card"><div class="num">${tax}</div><div class="lbl">Tax</div></div>
+    <div class="card"><div class="num">${d.by_county.length}</div><div class="lbl">Counties</div></div>
+    <div class="card"><div class="num">${d.top_cities.length}</div><div class="lbl">Cities Covered</div></div>
+  `;
 
-def require_api_key():
-    key = request.headers.get("X-API-Key") or request.args.get("api_key")
-    if not key:
-        return None, (jsonify({"error": "Missing API key. Include header 'X-API-Key'. "
-                                          "Get one free at POST /api/v1/keys"}), 401)
-    conn = get_conn()
-    row = conn.execute("SELECT * FROM api_keys WHERE api_key = ? AND active = 1", (key,)).fetchone()
-    if not row:
-        conn.close()
-        return None, (jsonify({"error": "Invalid or inactive API key"}), 401)
-    conn.execute(
-        "UPDATE api_keys SET last_used_at = ?, request_count = request_count + 1 WHERE id = ?",
-        (dt.datetime.utcnow().isoformat(), row["id"]),
-    )
-    conn.commit()
-    conn.close()
-    return row, None
+  const maxCounty = Math.max(...d.by_county.map(c=>c.c), 1);
+  document.getElementById("countyBars").innerHTML = d.by_county.map(c=>barRow(c.county + " County", c.c, maxCounty)).join("") || "<p>No data yet.</p>";
 
+  const maxCity = Math.max(...d.top_cities.map(c=>c.c), 1);
+  document.getElementById("cityBars").innerHTML = d.top_cities.map(c=>barRow(c.city, c.c, maxCity)).join("") || "<p>No data yet.</p>";
 
-# --------------------------------------------------------------------------
-# Public endpoints (used by our own web app only, no key required)
-# --------------------------------------------------------------------------
+  const maxMonth = Math.max(...d.by_month.map(m=>m.c), 1);
+  document.getElementById("monthBars").innerHTML = d.by_month.map(m=>barRow(fmtMonth(m.year,m.month), m.c, maxMonth)).join("") || "<p>No data yet.</p>";
 
-@app.route("/api/public/properties")
-def public_properties():
-    return jsonify(query_properties(request.args))
+  document.getElementById("lastSynced").textContent = d.last_sync_at
+    ? `Data last pulled: ${fmtDateTime(d.last_sync_at)} (${fmtRelative(d.last_sync_at)})`
+    : "No sync has run yet.";
 
+  const history = d.sync_history || [];
+  if(!history.length){
+    document.getElementById("syncHistory").innerHTML = "<p>No refresh history yet.</p>";
+  } else {
+    let hHtml = `<table class="history-table"><thead><tr>
+      <th>When</th><th>County</th><th>Found</th><th>Added</th><th>Updated</th><th>Status</th>
+    </tr></thead><tbody>`;
+    history.forEach(h=>{
+      const statusClass = h.status === 'ok' ? 'status-ok' : 'status-error';
+      const statusLabel = h.status === 'ok' ? 'OK' : 'Error';
+      hHtml += `<tr>
+        <td title="${fmtDateTime(h.run_at)}">${fmtRelative(h.run_at)}</td>
+        <td>${h.county || '--'}</td>
+        <td>${h.fetched ?? 0}</td>
+        <td>${h.inserted ?? 0}</td>
+        <td>${h.updated ?? 0}</td>
+        <td class="${statusClass}" title="${h.message ? escapeAttr(h.message) : ''}">${statusLabel}</td>
+      </tr>`;
+    });
+    hHtml += `</tbody></table>`;
+    document.getElementById("syncHistory").innerHTML = hHtml;
+  }
+}
 
-@app.route("/api/public/stats/summary")
-def public_summary():
-    return jsonify(summary_stats())
+// tab switching
+document.querySelectorAll(".tabs button").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    document.querySelectorAll(".tabs button").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active");
+    ["list","map","summary"].forEach(t=>{
+      document.getElementById(`view-${t}`).style.display = (t===btn.dataset.tab) ? "block" : "none";
+    });
+    if(btn.dataset.tab === "map") loadMap();
+    if(btn.dataset.tab === "summary") loadSummary();
+  });
+});
 
+document.getElementById("searchBtn").addEventListener("click", ()=>{
+  state.page = 1;
+  state.q = document.getElementById("q").value;
+  state.type = document.getElementById("type").value;
+  state.city = document.getElementById("city").value;
+  state.county = document.getElementById("county").value;
+  loadList();
+});
+document.getElementById("q").addEventListener("keydown", e=>{ if(e.key==="Enter") document.getElementById("searchBtn").click(); });
+document.getElementById("prevBtn").addEventListener("click", ()=>{ if(state.page>1){ state.page--; loadList(); }});
+document.getElementById("nextBtn").addEventListener("click", ()=>{ state.page++; loadList(); });
 
-@app.route("/api/public/meta")
-def public_meta():
-    return jsonify(meta_options())
-
-
-# --------------------------------------------------------------------------
-# Developer-facing v1 API (API key required, CORS-open, self-serve keys)
-# --------------------------------------------------------------------------
-
-@app.route("/api/v1/keys", methods=["POST"])
-def create_key():
-    """Instant self-serve API key. No approval queue, on purpose -- we want
-    this to be the easiest possible way for an app to plug into our feed."""
-    body = request.get_json(silent=True) or {}
-    name = (body.get("name") or "").strip()[:120]
-    email = (body.get("email") or "").strip()[:200]
-
-    new_key = "reix_" + secrets.token_urlsafe(24)
-    conn = get_conn()
-    conn.execute(
-        "INSERT INTO api_keys (api_key, name, email, created_at) VALUES (?,?,?,?)",
-        (new_key, name, email, dt.datetime.utcnow().isoformat()),
-    )
-    conn.commit()
-    conn.close()
-
-    return jsonify({
-        "api_key": new_key,
-        "usage": "Send this as the 'X-API-Key' header on requests to /api/v1/*",
-        "docs": "/docs",
-    }), 201
-
-
-@app.route("/api/v1/properties")
-def v1_properties():
-    _, err = require_api_key()
-    if err:
-        return err
-    return jsonify(query_properties(request.args))
-
-
-@app.route("/api/v1/properties/<int:property_id>")
-def v1_property_detail(property_id):
-    _, err = require_api_key()
-    if err:
-        return err
-    conn = get_conn()
-    row = conn.execute(
-        """SELECT id, county, source_layer AS type, doc_number, address, city, zip,
-                  school_dist, year, month, lat, lon, doc_link, first_seen, last_seen
-           FROM properties WHERE id = ?""",
-        (property_id,),
-    ).fetchone()
-    conn.close()
-    if not row:
-        return jsonify({"error": "not found"}), 404
-    return jsonify(row_to_dict(row))
-
-
-@app.route("/api/v1/stats/summary")
-def v1_summary():
-    _, err = require_api_key()
-    if err:
-        return err
-    return jsonify(summary_stats())
-
-
-@app.route("/api/v1/meta")
-def v1_meta():
-    _, err = require_api_key()
-    if err:
-        return err
-    return jsonify(meta_options())
-
-
-@app.route("/health")
-def health():
-    return jsonify({"status": "ok", "time": dt.datetime.utcnow().isoformat()})
-
-
-@app.route("/internal/sync", methods=["POST"])
-def internal_sync():
-    """Triggers a data sync. Protected by a shared secret so this can be
-    called by a scheduler (e.g. a GitHub Actions cron) without exposing an
-    open endpoint that anyone could hammer. Set REIX_SYNC_SECRET in your
-    hosting platform's environment variables, and the same value as a
-    'REIX_SYNC_SECRET' repo secret in GitHub -- see DEPLOY.md."""
-    import os
-    expected = os.environ.get("REIX_SYNC_SECRET")
-    provided = request.headers.get("X-Sync-Secret")
-    if not expected or provided != expected:
-        return jsonify({"error": "unauthorized"}), 401
-
-    from scraper import sync_once
-    county = request.args.get("county")
-    result = sync_once(county)
-    return jsonify({"status": "sync complete", **result})
-
-
-# --------------------------------------------------------------------------
-# Static app (list / map / search UI) + docs page
-# --------------------------------------------------------------------------
-
-@app.route("/")
-def index():
-    return send_from_directory("static", "index.html")
-
-
-@app.route("/docs")
-def docs():
-    return send_from_directory("static", "docs.html")
-
-
-if __name__ == "__main__":
-    init_db()
-    app.run(host="0.0.0.0", port=5000, debug=False)
+loadMeta();
+loadList();
+</script>
+</body>
+</html>
