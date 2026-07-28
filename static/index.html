@@ -68,6 +68,13 @@
   .empty{padding:40px;text-align:center;color:var(--sub);}
   .disclaimer{font-size:12px;color:var(--sub);margin:10px 0 20px;line-height:1.5;}
 
+  .history-table{width:100%;border-collapse:collapse;font-size:13px;}
+  .history-table th{text-align:left;color:var(--sub);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line);font-size:11px;text-transform:uppercase;letter-spacing:.03em;}
+  .history-table td{padding:6px 8px;border-bottom:1px solid var(--line);}
+  .history-table tr:last-child td{border-bottom:none;}
+  .status-ok{color:var(--accent);font-weight:700;}
+  .status-error{color:#c0392b;font-weight:700;}
+
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);
     background:var(--ink);color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;
     font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.2);opacity:0;pointer-events:none;
@@ -131,6 +138,7 @@
 
   <div id="view-summary" style="display:none;">
     <div class="summary-cards" id="summaryCards"></div>
+    <p id="lastSynced" class="disclaimer" style="margin-top:-8px;"></p>
     <div class="bars">
       <h3>By County</h3>
       <div id="countyBars"></div>
@@ -142,6 +150,10 @@
     <div class="bars">
       <h3>Notices by Month</h3>
       <div id="monthBars"></div>
+    </div>
+    <div class="bars">
+      <h3>Data Refresh History</h3>
+      <div id="syncHistory"></div>
     </div>
   </div>
 
@@ -163,6 +175,31 @@ function fmtMonth(y,m){
   if(!y || !m) return "--";
   const d = new Date(y, m-1, 1);
   return d.toLocaleString('en-US',{month:'short'}) + " " + y;
+}
+
+function fmtDateTime(isoStr){
+  if(!isoStr) return "--";
+  // Stored as naive UTC ISO strings (no "Z"); tell the browser explicitly
+  // it's UTC so it converts to the viewer's local time correctly.
+  const iso = isoStr.endsWith("Z") ? isoStr : isoStr + "Z";
+  const d = new Date(iso);
+  if(isNaN(d)) return isoStr;
+  return d.toLocaleString('en-US', {dateStyle:'medium', timeStyle:'short'});
+}
+
+function fmtRelative(isoStr){
+  if(!isoStr) return "";
+  const iso = isoStr.endsWith("Z") ? isoStr : isoStr + "Z";
+  const d = new Date(iso);
+  if(isNaN(d)) return "";
+  const diffMs = Date.now() - d.getTime();
+  const mins = Math.round(diffMs / 60000);
+  if(mins < 1) return "just now";
+  if(mins < 60) return `${mins} min${mins===1?'':'s'} ago`;
+  const hours = Math.round(mins / 60);
+  if(hours < 24) return `${hours} hour${hours===1?'':'s'} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days===1?'':'s'} ago`;
 }
 
 function qs(params){
@@ -340,6 +377,33 @@ async function loadSummary(){
 
   const maxMonth = Math.max(...d.by_month.map(m=>m.c), 1);
   document.getElementById("monthBars").innerHTML = d.by_month.map(m=>barRow(fmtMonth(m.year,m.month), m.c, maxMonth)).join("") || "<p>No data yet.</p>";
+
+  document.getElementById("lastSynced").textContent = d.last_sync_at
+    ? `Data last pulled: ${fmtDateTime(d.last_sync_at)} (${fmtRelative(d.last_sync_at)})`
+    : "No sync has run yet.";
+
+  const history = d.sync_history || [];
+  if(!history.length){
+    document.getElementById("syncHistory").innerHTML = "<p>No refresh history yet.</p>";
+  } else {
+    let hHtml = `<table class="history-table"><thead><tr>
+      <th>When</th><th>County</th><th>Found</th><th>Added</th><th>Updated</th><th>Status</th>
+    </tr></thead><tbody>`;
+    history.forEach(h=>{
+      const statusClass = h.status === 'ok' ? 'status-ok' : 'status-error';
+      const statusLabel = h.status === 'ok' ? 'OK' : 'Error';
+      hHtml += `<tr>
+        <td title="${fmtDateTime(h.run_at)}">${fmtRelative(h.run_at)}</td>
+        <td>${h.county || '--'}</td>
+        <td>${h.fetched ?? 0}</td>
+        <td>${h.inserted ?? 0}</td>
+        <td>${h.updated ?? 0}</td>
+        <td class="${statusClass}" title="${h.message ? escapeAttr(h.message) : ''}">${statusLabel}</td>
+      </tr>`;
+    });
+    hHtml += `</tbody></table>`;
+    document.getElementById("syncHistory").innerHTML = hHtml;
+  }
 }
 
 // tab switching
