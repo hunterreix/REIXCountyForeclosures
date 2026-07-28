@@ -1,0 +1,16 @@
+name: Sync foreclosure data
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the /internal/sync endpoint
+        run: |
+          curl -sf -X POST "${{ secrets.REIX_APP_URL }}/internal/sync" \
+            -H "X-Sync-Secret: ${{ secrets.REIX_SYNC_SECRET }}" \
+            || (echo "Sync request failed" && exit 1)
