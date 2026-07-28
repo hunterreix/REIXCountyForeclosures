@@ -23,6 +23,12 @@ from db import get_conn, init_db
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 
+# Ensure the schema exists whenever this module is imported -- including
+# under gunicorn, which imports `app:app` directly and never runs the
+# `if __name__ == "__main__"` block below. Safe to call repeatedly
+# (CREATE TABLE IF NOT EXISTS).
+init_db()
+
 
 @app.after_request
 def add_cors_headers(resp):
@@ -178,8 +184,12 @@ def summary_stats():
            GROUP BY year, month ORDER BY year DESC, month DESC LIMIT 12"""
     ).fetchall()
     last_run = conn.execute(
-        "SELECT run_at, layer, fetched, status FROM scrape_log ORDER BY id DESC LIMIT 5"
+        """SELECT run_at, layer AS county, fetched, inserted, updated, status, message
+           FROM scrape_log ORDER BY id DESC LIMIT 25"""
     ).fetchall()
+    most_recent = conn.execute(
+        "SELECT run_at FROM scrape_log ORDER BY id DESC LIMIT 1"
+    ).fetchone()
     conn.close()
 
     return {
@@ -188,7 +198,8 @@ def summary_stats():
         "by_type": [dict(r) for r in by_type],
         "top_cities": [dict(r) for r in by_city],
         "by_month": [dict(r) for r in by_month],
-        "last_sync_runs": [dict(r) for r in last_run],
+        "last_sync_at": most_recent["run_at"] if most_recent else None,
+        "sync_history": [dict(r) for r in last_run],
         "reix_link": REIX_URL,
     }
 
