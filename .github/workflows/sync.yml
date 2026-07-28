@@ -9,6 +9,14 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
+      - name: Check secrets are set (lengths only, values never printed)
+        run: |
+          echo "REIX_APP_URL length: ${#REIX_APP_URL}"
+          echo "REIX_SYNC_SECRET length: ${#REIX_SYNC_SECRET}"
+        env:
+          REIX_APP_URL: ${{ secrets.REIX_APP_URL }}
+          REIX_SYNC_SECRET: ${{ secrets.REIX_SYNC_SECRET }}
+
       - name: Call the /internal/sync endpoint
         run: |
           status=$(curl -s -o response.txt -w "%{http_code}" -X POST "${{ secrets.REIX_APP_URL }}/internal/sync" \
