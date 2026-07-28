@@ -11,6 +11,12 @@ jobs:
     steps:
       - name: Call the /internal/sync endpoint
         run: |
-          curl -sf -X POST "${{ secrets.REIX_APP_URL }}/internal/sync" \
-            -H "X-Sync-Secret: ${{ secrets.REIX_SYNC_SECRET }}" \
-            || (echo "Sync request failed" && exit 1)
+          status=$(curl -s -o response.txt -w "%{http_code}" -X POST "${{ secrets.REIX_APP_URL }}/internal/sync" \
+            -H "X-Sync-Secret: ${{ secrets.REIX_SYNC_SECRET }}")
+          echo "HTTP status: $status"
+          echo "Response body:"
+          cat response.txt
+          if [ "$status" -ne 200 ]; then
+            echo "Sync request failed with status $status"
+            exit 1
+          fi
