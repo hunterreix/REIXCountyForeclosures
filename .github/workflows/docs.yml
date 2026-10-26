@@ -1,0 +1,39 @@
+name: Link notices to courthouse documents
+
+on:
+  schedule:
+    # An hour after the daily data sync (sync.yml runs at 06:00 UTC)
+    - cron: "0 7 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  resolve-docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install worker dependencies
+        run: |
+          pip install -r doc_worker/requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Resolve notice documents (small, throttled batch)
+        env:
+          REIX_APP_URL: ${{ secrets.REIX_APP_URL }}
+          REIX_SYNC_SECRET: ${{ secrets.REIX_SYNC_SECRET }}
+          BATCH: "25"
+          DELAY_SECONDS: "8"
+        run: python doc_worker/resolve_bexar.py
+
+      - name: Save debug screenshots (only if something failed)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: doc-worker-debug
+          path: doc_worker/debug/
+          if-no-files-found: ignore
