@@ -139,6 +139,36 @@ def paginate_args(args):
     return page, per_page
 
 
+def attach_documents(conn, items):
+    """Adds a `documents` list to each property dict (one query for all)."""
+    ids = [i["id"] for i in items]
+    for i in items:
+        i["documents"] = []
+    if not ids:
+        return items
+    marks = ",".join("?" * len(ids))
+    rows = conn.execute(
+        f"""SELECT property_id, doc_role, doc_number, doc_type, recorded_date,
+                   url, confidence
+            FROM property_documents WHERE property_id IN ({marks})
+            ORDER BY id""",
+        ids,
+    ).fetchall()
+    by_id = {i["id"]: i for i in items}
+    for r in rows:
+        d = dict(r)
+        by_id[d.pop("property_id")]["documents"].append(d)
+    # Once a notice has been found on the Clerk's site, `doc_link` IS the
+    # direct link to that recorded notice. Done at read time (not stored over
+    # the properties row) so the daily county sync can't overwrite it.
+    for i in items:
+        notice = next((d for d in i["documents"] if d["doc_role"] == "notice"), None)
+        i["doc_link_is_direct"] = bool(notice)
+        if notice:
+            i["doc_link"] = notice["url"]
+    return items
+
+
 def query_properties(args):
     conn = get_conn()
     where, params = build_filters(args)
@@ -155,10 +185,11 @@ def query_properties(args):
             LIMIT ? OFFSET ?""",
         params + [per_page, offset],
     ).fetchall()
+    results = attach_documents(conn, [row_to_dict(r) for r in rows])
     conn.close()
 
     return {
-        "results": [row_to_dict(r) for r in rows],
+        "results": results,
         "page": page,
         "per_page": per_page,
         "total": total,
@@ -306,10 +337,12 @@ def v1_property_detail(property_id):
            FROM properties WHERE id = ?""",
         (property_id,),
     ).fetchone()
-    conn.close()
     if not row:
+        conn.close()
         return jsonify({"error": "not found"}), 404
-    return jsonify(row_to_dict(row))
+    item = attach_documents(conn, [row_to_dict(row)])[0]
+    conn.close()
+    return jsonify(item)
 
 
 @app.route("/api/v1/stats/summary")
@@ -326,6 +359,92 @@ def v1_meta():
     if err:
         return err
     return jsonify(meta_options())
+
+
+def _sync_secret_ok():
+    import os
+    expected = os.environ.get("REIX_SYNC_SECRET")
+    return bool(expected) and request.headers.get("X-Sync-Secret") == expected
+
+
+@app.route("/internal/documents/pending")
+def internal_docs_pending():
+    """Notices that still need their courthouse documents resolved.
+    Used by the document worker (GitHub Actions). Secret-protected."""
+    if not _sync_secret_ok():
+        return jsonify({"error": "unauthorized"}), 401
+    county = request.args.get("county", "Bexar")
+    try:
+        limit = max(1, min(int(request.args.get("limit", 25)), 100))
+    except ValueError:
+        limit = 25
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT p.id, p.county, p.doc_number, p.address, p.year, p.month
+           FROM properties p
+           LEFT JOIN doc_resolution r ON r.property_id = p.id
+           WHERE p.county = ? AND p.source_layer = 'mortgage'
+             AND (r.property_id IS NULL
+                  OR (r.status != 'resolved' AND r.attempts < 3))
+           ORDER BY p.year DESC, p.month DESC, p.id DESC
+           LIMIT ?""",
+        (county, limit),
+    ).fetchall()
+    conn.close()
+    return jsonify({"pending": [dict(r) for r in rows]})
+
+
+@app.route("/internal/documents", methods=["POST"])
+def internal_docs_post():
+    """Worker reports the outcome for one property: a status plus any
+    documents it found. Secret-protected. Idempotent."""
+    if not _sync_secret_ok():
+        return jsonify({"error": "unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    pid = body.get("property_id")
+    status = body.get("status")
+    if not isinstance(pid, int) or status not in ("resolved", "not_found", "error"):
+        return jsonify({"error": "property_id (int) and status "
+                                  "(resolved|not_found|error) required"}), 400
+    now = dt.datetime.utcnow().isoformat()
+    conn = get_conn()
+    if not conn.execute("SELECT 1 FROM properties WHERE id = ?", (pid,)).fetchone():
+        conn.close()
+        return jsonify({"error": "unknown property_id"}), 404
+    roles = {"notice", "deed_of_trust", "assignment", "release", "lien"}
+    saved = 0
+    for d in body.get("documents") or []:
+        url = (d.get("url") or "").strip()
+        role = d.get("doc_role")
+        # only ever store links to the County Clerk's own search site
+        if role not in roles or not url.startswith("https://") or ".publicsearch.us/" not in url:
+            continue
+        conn.execute(
+            """INSERT INTO property_documents
+                 (property_id, doc_role, doc_number, doc_type, recorded_date,
+                  url, match_method, confidence, fetched_at)
+               VALUES (?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(property_id, doc_role, url) DO UPDATE SET
+                 doc_number=excluded.doc_number, doc_type=excluded.doc_type,
+                 recorded_date=excluded.recorded_date,
+                 match_method=excluded.match_method,
+                 confidence=excluded.confidence, fetched_at=excluded.fetched_at""",
+            (pid, role, d.get("doc_number"), d.get("doc_type"),
+             d.get("recorded_date"), url, d.get("match_method"),
+             d.get("confidence"), now),
+        )
+        saved += 1
+    conn.execute(
+        """INSERT INTO doc_resolution (property_id, status, attempts, last_attempt, message)
+           VALUES (?,?,1,?,?)
+           ON CONFLICT(property_id) DO UPDATE SET
+             status=excluded.status, attempts=attempts+1,
+             last_attempt=excluded.last_attempt, message=excluded.message""",
+        (pid, status, now, (body.get("message") or "")[:300]),
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "ok", "documents_saved": saved})
 
 
 @app.route("/health")
