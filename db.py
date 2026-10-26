@@ -58,6 +58,34 @@ CREATE TABLE IF NOT EXISTS scrape_log (
     status      TEXT,
     message     TEXT
 );
+
+-- Court-house documents linked to a notice: the notice itself, the deed of
+-- trust it forecloses, and related assignments/releases/liens. We store
+-- LINKS (and a little metadata), never copies of the documents.
+CREATE TABLE IF NOT EXISTS property_documents (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id   INTEGER NOT NULL,
+    doc_role      TEXT NOT NULL,   -- notice | deed_of_trust | assignment | release | lien
+    doc_number    TEXT,
+    doc_type      TEXT,
+    recorded_date TEXT,
+    url           TEXT NOT NULL,
+    match_method  TEXT,            -- how we found it (e.g. 'clerk_search_by_doc_number')
+    confidence    TEXT,            -- high | medium | low
+    fetched_at    TEXT NOT NULL,
+    UNIQUE(property_id, doc_role, url)
+);
+CREATE INDEX IF NOT EXISTS idx_propdocs_property ON property_documents(property_id);
+
+-- One row per property tracking document-resolution attempts, so the worker
+-- doesn't retry forever and we can see what's pending/failed.
+CREATE TABLE IF NOT EXISTS doc_resolution (
+    property_id  INTEGER PRIMARY KEY,
+    status       TEXT NOT NULL,    -- resolved | not_found | error
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    last_attempt TEXT,
+    message      TEXT
+);
 """
 
 
