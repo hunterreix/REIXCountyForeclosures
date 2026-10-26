@@ -19,7 +19,13 @@ PAGE_SIZE = 1000
 
 # Placeholder until a direct document-viewer URL pattern is confirmed --
 # see the note in README.md about linking Doc # to the recorded document.
-DOC_LINK_TEMPLATE = "https://bexar.tx.publicsearch.us/results?searchType=quickSearch&query={doc_number}"
+# NOTE: the Clerk's site cannot be deep-linked by document number. Search
+# URLs only work when submitted from the site's own form (a cold load of the
+# same URL returns "No Results Found"), and the old `query=` link we used
+# returned "invalid department code". Until the document worker resolves a
+# direct /doc/<id> link for a notice, this points at the search home page and
+# the web app copies the doc # for the user to paste (Foreclosures department).
+DOC_LINK_TEMPLATE = "https://bexar.tx.publicsearch.us/"
 
 
 class BexarSource(CountySource):
