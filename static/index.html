@@ -54,6 +54,9 @@
   .pill.tax{background:var(--tax);}
   a.doclink{color:var(--accent);text-decoration:none;font-weight:600;}
   a.doclink:hover{text-decoration:underline;}
+  .doc-chips{margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;}
+  a.chip{font-size:11px;font-weight:600;color:var(--accent);background:#eef4f2;border-radius:999px;padding:2px 8px;text-decoration:none;white-space:nowrap;}
+  a.chip:hover{background:#dcebe6;}
   .view-btn{background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:700;text-decoration:none;white-space:nowrap;}
 
   .pager{display:flex;justify-content:center;align-items:center;gap:14px;padding:16px 0;font-size:14px;}
@@ -253,6 +256,12 @@ async function copyText(text){
 // search) and Leaflet map popups (added to the DOM dynamically), so one
 // listener on document handles "View on REIX" everywhere.
 document.addEventListener("click", async (e)=>{
+  const docBtn = e.target.closest(".doc-copy");
+  if(docBtn){
+    const ok = await copyText(docBtn.getAttribute("data-doc"));
+    showToast(ok ? "Doc # Copied - paste it in the Clerk's search" : "Couldn't copy doc #");
+    return; // link still opens the Clerk's search in a new tab
+  }
   const btn = e.target.closest(".view-btn");
   if(!btn) return;
   const address = btn.getAttribute("data-address");
@@ -280,6 +289,30 @@ async function loadMeta(){
   });
 }
 
+const DOC_LABELS = {deed_of_trust:"Deed of Trust", assignment:"Assignment", release:"Release", lien:"Lien"};
+
+function docCell(r){
+  const docs = r.documents || [];
+  const notice = docs.find(d=>d.doc_role === "notice");
+  const others = docs.filter(d=>d.doc_role !== "notice");
+  let html;
+  if(notice){
+    // direct link to the recorded notice on the County Clerk's site
+    html = `<a class="doclink" href="${escapeAttr(notice.url)}" target="_blank" rel="noopener">${r.doc_number}</a>`;
+  } else if(r.county === "Bexar"){
+    // Clerk's site can't be deep-linked by doc #, so copy it and open the search
+    html = `<a class="doclink doc-copy" href="${escapeAttr(r.doc_link)}" target="_blank" rel="noopener" data-doc="${escapeAttr(r.doc_number)}" title="Copies the doc # and opens the County Clerk's records search (use the Foreclosures department)">${r.doc_number}</a>`;
+  } else {
+    html = `<a class="doclink" href="${escapeAttr(r.doc_link)}" target="_blank" rel="noopener">${r.doc_number}</a>`;
+  }
+  if(others.length){
+    html += `<div class="doc-chips">` + others.map(d=>
+      `<a class="chip" href="${escapeAttr(d.url)}" target="_blank" rel="noopener" title="${escapeAttr((d.doc_type||"") + (d.confidence ? " (" + d.confidence + " confidence match)" : ""))}">${DOC_LABELS[d.doc_role] || d.doc_role}</a>`
+    ).join("") + `</div>`;
+  }
+  return html;
+}
+
 function renderRows(rows){
   const container = document.getElementById("listContainer");
   if(!rows.length){
@@ -299,7 +332,7 @@ function renderRows(rows){
       <td>${r.address || "--"}</td>
       <td>${r.city || "--"}</td>
       <td>${r.zip || "--"}</td>
-      <td><a class="doclink" href="${r.doc_link}" target="_blank" rel="noopener">${r.doc_number}</a></td>
+      <td>${docCell(r)}</td>
       <td>${fmtMonth(r.year, r.month)}</td>
       <td><a class="view-btn" href="${reixUrlFor(addr)}" target="_blank" rel="noopener" data-address="${escapeAttr(addr)}">View on REIX</a></td>
     </tr>`;
@@ -387,7 +420,7 @@ async function loadSummary(){
     document.getElementById("syncHistory").innerHTML = "<p>No refresh history yet.</p>";
   } else {
     let hHtml = `<table class="history-table"><thead><tr>
-      <th>When</th><th>County</th><th>Found</th><th>Added</th><th>Updated</th><th>Status</th>
+      <th>When</th><th>County</th><th>Found</th><th title="Properties not already in our database before this sync">New Properties</th><th title="Properties already on file, just refreshed">Updated</th><th>Status</th>
     </tr></thead><tbody>`;
     history.forEach(h=>{
       const statusClass = h.status === 'ok' ? 'status-ok' : 'status-error';
@@ -396,7 +429,7 @@ async function loadSummary(){
         <td title="${fmtDateTime(h.run_at)}">${fmtRelative(h.run_at)}</td>
         <td>${h.county || '--'}</td>
         <td>${h.fetched ?? 0}</td>
-        <td>${h.inserted ?? 0}</td>
+        <td style="${(h.inserted ?? 0) > 0 ? 'color:var(--accent);font-weight:800;' : ''}">${h.inserted ?? 0}</td>
         <td>${h.updated ?? 0}</td>
         <td class="${statusClass}" title="${h.message ? escapeAttr(h.message) : ''}">${statusLabel}</td>
       </tr>`;
