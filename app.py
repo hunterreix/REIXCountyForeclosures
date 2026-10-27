@@ -69,10 +69,22 @@ def build_full_address(address, city, zip_code):
     return ", ".join(parts) if parts[0] else city_state_zip
 
 
+# Same link format the Bexar County Clerk's own foreclosure map uses for each
+# notice's document number. It opens the Clerk's results page for that notice.
+# It lists notices with upcoming sale dates; once a sale date has passed the
+# Clerk's site no longer returns it by default (the web app copies the doc # so
+# it can be pasted into the Clerk's Foreclosures search instead).
+BEXAR_NOTICE_LINK = ("https://bexar.tx.publicsearch.us/results?department=FC"
+                     "&searchOcrText=false&searchType=quickSearch&searchValue={doc}")
+
+
 def row_to_dict(row):
     d = dict(row)
     d["full_address"] = build_full_address(d.get("address"), d.get("city"), d.get("zip"))
     d["reix_link"] = REIX_URL
+    if d.get("county") == "Bexar" and d.get("type") == "mortgage" and d.get("doc_number"):
+        # computed at read time so it also fixes older rows stored with the old link
+        d["doc_link"] = BEXAR_NOTICE_LINK.format(doc=d["doc_number"])
     return d
 
 
