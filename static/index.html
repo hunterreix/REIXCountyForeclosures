@@ -259,7 +259,7 @@ document.addEventListener("click", async (e)=>{
   const docBtn = e.target.closest(".doc-copy");
   if(docBtn){
     const ok = await copyText(docBtn.getAttribute("data-doc"));
-    showToast(ok ? "Doc # Copied - paste it in the Clerk's search" : "Couldn't copy doc #");
+    showToast(ok ? "Doc # Copied" : "Couldn't copy doc #");
     return; // link still opens the Clerk's search in a new tab
   }
   const btn = e.target.closest(".view-btn");
@@ -301,7 +301,7 @@ function docCell(r){
     html = `<a class="doclink" href="${escapeAttr(notice.url)}" target="_blank" rel="noopener">${r.doc_number}</a>`;
   } else if(r.county === "Bexar"){
     // Clerk's site can't be deep-linked by doc #, so copy it and open the search
-    html = `<a class="doclink doc-copy" href="${escapeAttr(r.doc_link)}" target="_blank" rel="noopener" data-doc="${escapeAttr(r.doc_number)}" title="Copies the doc # and opens the County Clerk's records search (use the Foreclosures department)">${r.doc_number}</a>`;
+    html = `<a class="doclink doc-copy" href="${escapeAttr(r.doc_link)}" target="_blank" rel="noopener" data-doc="${escapeAttr(r.doc_number)}" title="Opens this notice on the County Clerk's site and copies the doc #. If the sale date has passed, paste the doc # into the Clerk's Foreclosures search.">${r.doc_number}</a>`;
   } else {
     html = `<a class="doclink" href="${escapeAttr(r.doc_link)}" target="_blank" rel="noopener">${r.doc_number}</a>`;
   }
