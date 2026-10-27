@@ -19,13 +19,12 @@ PAGE_SIZE = 1000
 
 # Placeholder until a direct document-viewer URL pattern is confirmed --
 # see the note in README.md about linking Doc # to the recorded document.
-# NOTE: the Clerk's site cannot be deep-linked by document number. Search
-# URLs only work when submitted from the site's own form (a cold load of the
-# same URL returns "No Results Found"), and the old `query=` link we used
-# returned "invalid department code". Until the document worker resolves a
-# direct /doc/<id> link for a notice, this points at the search home page and
-# the web app copies the doc # for the user to paste (Foreclosures department).
-DOC_LINK_TEMPLATE = "https://bexar.tx.publicsearch.us/"
+# Same link format the County Clerk's own foreclosure map uses for a notice's
+# document number. It shows notices with upcoming sale dates (past sales drop
+# off the Clerk's default results). Note: adding extra parameters such as
+# keywordSearch=false or a date range breaks the link, so keep it exactly as is.
+DOC_LINK_TEMPLATE = ("https://bexar.tx.publicsearch.us/results?department=FC"
+                     "&searchOcrText=false&searchType=quickSearch&searchValue={doc_number}")
 
 
 class BexarSource(CountySource):
