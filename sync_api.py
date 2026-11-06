@@ -63,11 +63,16 @@ def attach_status(conn, items):
     for i in items:
         i["property_key"] = property_key(i["county"], i["type"], i["doc_number"])
         i["docs_status"] = {r: "missing" for r in ROLES}
+        i["docs_extra"] = 0                      # optional additional documents on file
     if ids:
         marks = ",".join("?" * len(ids))
         by_id = {i["id"]: i for i in items}
         for r in conn.execute(f"SELECT property_id, doc_role, status FROM property_files "
                               f"WHERE property_id IN ({marks}) AND status != 'removed'", ids).fetchall():
+            if r["doc_role"] not in ROLES:       # additional documents are counted, not part of the status
+                if r["status"] == "uploaded":
+                    by_id[r["property_id"]]["docs_extra"] += 1
+                continue
             st = by_id[r["property_id"]]["docs_status"]
             if r["status"] == "uploaded":
                 st[r["doc_role"]] = "done"
@@ -128,10 +133,11 @@ def property_documents(key):
             fields = json.loads(f["fields_json"] or "{}")
         except ValueError:
             fields = {}
-        if f["status"] == "uploaded":
-            status[f["doc_role"]] = "done"
-        elif status[f["doc_role"]] != "done":
-            status[f["doc_role"]] = "none_found"
+        if f["doc_role"] in ROLES:               # additional documents don't change the required-document status
+            if f["status"] == "uploaded":
+                status[f["doc_role"]] = "done"
+            elif status[f["doc_role"]] != "done":
+                status[f["doc_role"]] = "none_found"
         out.append({"file_id": f["id"], "role": f["doc_role"], "role_label": ROLE_LABELS[f["doc_role"]],
                     "subtype": f["doc_subtype"] or None, "status": f["status"], "doc_number": f["doc_number"] or None,
                     "number_matches_expected": None if f["stamp_matches"] is None else bool(f["stamp_matches"]),
