@@ -125,8 +125,12 @@ function show(v){ ["loginView","noAccessView","listView","propView"].forEach(x=>
 async function api(path, opts){
   opts = opts || {}; opts.headers = Object.assign({}, opts.headers||{});
   if(opts.method && opts.method!=="GET") opts.headers["X-CSRF-Token"] = csrf;
-  const r = await fetch(path, opts);
+  let r = await fetch(path, opts);
   let j = {}; try{ j = await r.json(); }catch(e){}
+  if(r.status===403 && /CSRF/.test(j.error||"") && !path.includes("/login")){
+    // the security token went stale (for example another tab signed in again): fetch the current one and retry once
+    try{ const m = await (await fetch("/intake/api/me")).json(); if(m.user && m.csrf){ csrf = m.csrf; opts.headers["X-CSRF-Token"] = csrf; r = await fetch(path, opts); j = {}; try{ j = await r.json(); }catch(e){} } }catch(e){}
+  }
   if(r.status===401 && !path.includes("/login")){ me=null; show("loginView"); $("who").textContent=""; throw new Error("Please sign in again."); }
   if(!r.ok) throw new Error(j.error || ("Error " + r.status));
   return j;
