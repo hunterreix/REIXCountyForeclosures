@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>REIX Document Intake</title>
+<style>
+  :root{--ink:#1b1f24;--sub:#5b6470;--line:#e4e7eb;--bg:#f7f8fa;--accent:#0f6e5c;--accent-dark:#0b5748;--card:#fff;--warn:#b3541e;--bad:#c0392b;}
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);}
+  header{background:var(--card);border-bottom:1px solid var(--line);padding:12px 20px;display:flex;align-items:center;justify-content:space-between;}
+  header b{font-size:17px;} header .who{font-size:13px;color:var(--sub);}
+  button,.btn{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);background:#fff;padding:7px 14px;font-size:13px;font-weight:600;color:var(--ink);text-decoration:none;display:inline-block;}
+  button.primary,.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;} button.primary:hover{background:var(--accent-dark);}
+  button.link{border:none;background:none;color:var(--accent);padding:0;}
+  button:disabled{opacity:.5;cursor:default;}
+  input,select,textarea{font:inherit;font-size:14px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;width:100%;}
+  .wrap{max-width:1180px;margin:0 auto;padding:18px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px;}
+  .card h3{margin:0 0 10px;font-size:14px;color:var(--sub);text-transform:uppercase;letter-spacing:.04em;}
+  .hidden{display:none;}
+  .login{max-width:360px;margin:70px auto;} .login label{display:block;font-size:13px;color:var(--sub);margin:10px 0 4px;}
+  .err{color:var(--bad);font-size:13px;margin-top:8px;} .muted{color:var(--sub);font-size:13px;}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px;}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;} .stat .n{font-size:24px;font-weight:800;} .stat .l{font-size:11px;color:var(--sub);text-transform:uppercase;letter-spacing:.04em;}
+  .filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;} .filters>*{width:auto;min-width:130px;} .filters input{flex:1;min-width:200px;}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13px;}
+  th{background:#fafbfc;text-align:left;font-size:11px;color:var(--sub);text-transform:uppercase;letter-spacing:.03em;padding:9px 10px;border-bottom:1px solid var(--line);}
+  td{padding:10px;border-bottom:1px solid var(--line);vertical-align:middle;} tr:last-child td{border-bottom:none;}
+  .pill{display:inline-block;min-width:26px;text-align:center;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;margin-right:3px;}
+  .pill.done{background:#e3f3ec;color:var(--accent);} .pill.missing{background:#f1f2f4;color:#8a929c;} .pill.none_found{background:#fff3e6;color:var(--warn);}
+  .pager{display:flex;gap:12px;justify-content:center;align-items:center;padding:12px;font-size:13px;}
+  .steps{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;} .step{flex:1;min-width:150px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fff;font-size:13px;}
+  .step b{display:block;font-size:12px;color:var(--sub);text-transform:uppercase;} .step.done{border-color:var(--accent);background:#f2faf6;} .step.current{border-color:var(--ink);box-shadow:0 0 0 2px #1b1f2422;} .step.none_found{border-color:var(--warn);background:#fff8f0;}
+  .grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;} @media(max-width:900px){.grid2{grid-template-columns:1fr;}}
+  .lookup{background:#f6f8fa;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:10px 0;font-size:13px;} .lookup div{margin:3px 0;}
+  .copy{font-weight:700;font-family:ui-monospace,Menlo,monospace;background:#fff;border:1px solid var(--line);border-radius:6px;padding:1px 6px;}
+  ol.how{padding-left:20px;margin:8px 0;font-size:13px;line-height:1.5;}
+  .drop{border:2px dashed #cfd5dc;border-radius:12px;padding:18px;text-align:center;color:var(--sub);font-size:13px;}
+  .field{margin:8px 0;} .field label{display:block;font-size:12px;color:var(--sub);margin-bottom:3px;} .field input.empty{border-color:var(--warn);background:#fffaf5;}
+  .badge{display:inline-block;padding:3px 9px;border-radius:999px;font-size:12px;font-weight:700;} .badge.ok{background:#e3f3ec;color:var(--accent);} .badge.bad{background:#fdecea;color:var(--bad);} .badge.unk{background:#fff3e6;color:var(--warn);}
+  .bar{height:8px;background:#eceff2;border-radius:6px;overflow:hidden;margin:8px 0;} .bar>div{height:100%;background:var(--accent);width:0;transition:width .2s;}
+  iframe.preview{width:100%;height:520px;border:1px solid var(--line);border-radius:10px;background:#fff;}
+  .file{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px;} .file:last-child{border-bottom:none;}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .2s;z-index:50;} .toast.show{opacity:1;}
+</style>
+</head>
+<body>
+<header><b>REIX Document Intake</b><div class="who" id="who"></div></header>
+<div class="wrap">
+
+  <!-- LOGIN -->
+  <div id="loginView" class="card login hidden">
+    <h3 style="margin-bottom:4px">Sign in</h3><div class="muted">For REIX document-intake staff.</div>
+    <label for="email">Email</label><input id="email" type="email" autocomplete="username">
+    <label for="password">Password</label><input id="password" type="password" autocomplete="current-password">
+    <div style="margin-top:14px"><button class="primary" id="loginBtn">Sign in</button></div>
+    <div class="err" id="loginErr"></div>
+  </div>
+
+  <!-- SIGNED IN, BUT NOT AN INTAKE ACCOUNT -->
+  <div id="noAccessView" class="card hidden" style="max-width:460px;margin:60px auto;">
+    <h3>No access to document intake</h3>
+    <p class="muted">You're signed in, but this account can only use the foreclosure list. Ask a REIX admin for an intake account.</p>
+    <a class="btn primary" href="/">Go to the foreclosure list</a>
+  </div>
+
+  <!-- WORK LIST -->
+  <div id="listView" class="hidden">
+    <div class="stats" id="stats"></div>
+    <div class="filters">
+      <input id="fq" placeholder="Search address, ZIP or doc #">
+      <select id="fmissing">
+        <option value="any">Needs documents</option><option value="notice">Missing notice</option>
+        <option value="deed_of_trust">Missing deed of trust</option><option value="loan_doc">Missing loan doc</option>
+        <option value="complete">Complete</option><option value="all">All</option>
+      </select>
+      <select id="fyear"><option value="">Any year</option><option>2026</option><option>2027</option></select>
+      <select id="fmonth"><option value="">Any month</option></select>
+      <button id="fgo" class="primary">Filter</button>
+    </div>
+    <div id="rows"></div>
+    <div class="pager"><button id="prev">Prev</button><span id="pageinfo"></span><button id="next">Next</button></div>
+    <div class="muted" id="disk" style="text-align:center"></div>
+  </div>
+
+  <!-- ONE PROPERTY -->
+  <div id="propView" class="hidden">
+    <p><button class="link" id="back">&larr; Back to the list</button></p>
+    <div class="card"><div id="ptitle" style="font-size:18px;font-weight:800"></div><div class="muted" id="psub"></div></div>
+    <div class="steps" id="steps"></div>
+    <div class="grid2">
+      <div>
+        <div class="card" id="guide"></div>
+        <div class="card" id="uploadCard"></div>
+        <div class="card"><h3>Documents on file</h3><div id="files"></div></div>
+      </div>
+      <div class="card"><h3 id="prevTitle">Preview</h3><iframe class="preview hidden" id="preview" title="PDF preview"></iframe><div class="muted" id="prevHint">Choose a PDF to see it here.</div></div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="/intake_parse.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+let csrf = "", me = null, page = 1, cur = null, picked = null, pickedUrl = null;
+const ROLE_LABEL = {notice:"Foreclosure notice", deed_of_trust:"Deed of Trust", loan_doc:"Loan document"};
+const OCR_PAGES = {notice:4, deed_of_trust:2, loan_doc:3};
+const SUBTYPES = [["assignment","Assignment"],["note","Note"],["lien","Lien"],["release","Release"],["other","Other"]];
+const FIELDS = {
+  notice:[["stamp_doc","Document # stamped on the notice","num"],["stamp_date","Recorded date (stamp)","date"],["deed_instrument","Deed of Trust document #","num"],["deed_recorded","Deed of Trust recorded on","date"],["deed_dated","Deed of Trust dated","date"],["borrower","Borrower","text"],["lender","Lender / beneficiary","text"],["principal","Original loan amount","text"],["sale_date","Sale date","date"]],
+  deed_of_trust:[["stamp_doc","Document # stamped on the deed","num"],["stamp_date","Recorded date (stamp)","date"],["dated","Dated","date"],["borrower","Borrower (grantor)","text"],["lender","Lender (beneficiary)","text"],["trustee","Trustee","text"],["principal","Loan amount","text"]],
+  loan_doc:[["stamp_doc","Document # stamped on the document","num"],["stamp_date","Recorded date (stamp)","date"],["assignor","Assignor / lienholder","text"],["assignee","Assignee","text"],["references","Deed of Trust # it refers to","num"],["principal","Amount","text"]]
+};
+
+function toast(m){ const t=$("toast"); t.textContent=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2400); }
+function show(v){ ["loginView","noAccessView","listView","propView"].forEach(x=>$(x).classList.toggle("hidden", x!==v)); }
+async function api(path, opts){
+  opts = opts || {}; opts.headers = Object.assign({}, opts.headers||{});
+  if(opts.method && opts.method!=="GET") opts.headers["X-CSRF-Token"] = csrf;
+  const r = await fetch(path, opts);
+  let j = {}; try{ j = await r.json(); }catch(e){}
+  if(r.status===401 && !path.includes("/login")){ me=null; show("loginView"); $("who").textContent=""; throw new Error("Please sign in again."); }
+  if(!r.ok) throw new Error(j.error || ("Error " + r.status));
+  return j;
+}
+async function copyText(t){ try{ await navigator.clipboard.writeText(t); toast("Copied"); }catch(e){ toast("Couldn't copy"); } }
+
+/* ---------- login ---------- */
+async function login(){
+  $("loginErr").textContent="";
+  try{
+    const j = await api("/intake/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:$("email").value,password:$("password").value})});
+    csrf=j.csrf; me=j.user; $("password").value=""; enter();
+  }catch(e){ $("loginErr").textContent=e.message; }
+}
+async function logout(){ try{ await api("/intake/api/logout",{method:"POST"}); }catch(e){} location.hash=""; show("loginView"); $("who").textContent=""; }
+function enter(){
+  if(me.role !== "intake" && me.role !== "admin"){ show("noAccessView"); }
+  $("who").innerHTML = esc(me.name||me.email) + ' &middot; <button class="link" id="logoutBtn">Sign out</button>';
+  $("logoutBtn").onclick = logout;
+  if(me.role === "intake" || me.role === "admin") route();
+}
+
+/* ---------- work list ---------- */
+function pill(state, label){ return '<span class="pill '+state+'" title="'+label+'">'+(state==="done"?"✓":state==="none_found"?"none":"–")+" "+label+"</span>"; }
+async function loadStats(){
+  const s = await api("/intake/api/stats");
+  $("stats").innerHTML = [["Notices",s.total],["Have notice PDF",s.with_notice],["Have deed of trust",s.with_deed],["Have loan doc / none",s.with_loan],["Complete",s.complete]]
+    .map(x=>'<div class="stat"><div class="n">'+x[1]+'</div><div class="l">'+x[0]+'</div></div>').join("");
+  const d = s.disk || {};
+  $("disk").textContent = d.error ? ("Storage: " + d.error) : ("Stored: " + s.stored_mb + " MB · Disk free: " + d.free_mb + " MB" + (d.free_mb < 200 ? " — LOW, resize the Render disk" : ""));
+  $("disk").style.color = (d.free_mb < 200 || d.error) ? "var(--bad)" : "";
+}
+async function loadList(){
+  const p = new URLSearchParams({page:page, missing:$("fmissing").value});
+  if($("fq").value.trim()) p.set("q",$("fq").value.trim());
+  if($("fyear").value) p.set("year",$("fyear").value);
+  if($("fmonth").value) p.set("month",$("fmonth").value);
+  const j = await api("/intake/api/worklist?"+p);
+  const NEXT = {notice:"Upload notice", deed_of_trust:"Find deed of trust", loan_doc:"Find loan doc"};
+  $("rows").innerHTML = j.results.length ? '<table><thead><tr><th>Address</th><th>Sale month</th><th>Doc #</th><th>Documents</th><th>Next step</th><th></th></tr></thead><tbody>' +
+    j.results.map(r=>'<tr><td><b>'+esc(r.address||"--")+'</b><div class="muted">'+esc(r.city||"")+' '+esc(r.zip||"")+'</div></td>'+
+      '<td>'+esc(r.year)+'-'+String(r.month||"").padStart(2,"0")+'</td>'+
+      '<td><a href="'+esc(r.notice_link)+'" target="_blank" rel="noopener">'+esc(r.doc_number)+'</a></td>'+
+      '<td>'+pill(r.notice_state,"Notice")+pill(r.deed_state,"Deed")+pill(r.loan_state,"Loan")+'</td>'+
+      '<td>'+(r.next?esc(NEXT[r.next]):'<span class="pill done">Complete</span>')+'</td>'+
+      '<td><button class="primary" data-id="'+r.id+'">'+(r.next?"Work on this":"Open")+'</button></td></tr>').join("") + '</tbody></table>'
+    : '<div class="card muted">Nothing matches these filters.</div>';
+  $("rows").querySelectorAll("button[data-id]").forEach(b=>b.onclick=()=>{ location.hash="#p/"+b.dataset.id; });
+  const pages = Math.max(1, Math.ceil(j.total/j.per_page));
+  $("pageinfo").textContent = "Page "+j.page+" of "+pages+" ("+j.total+" notices)";
+  $("prev").disabled = j.page<=1; $("next").disabled = j.page>=pages;
+}
+
+/* ---------- one property ---------- */
+function stepsHtml(g){ return g.steps.map(s=>'<div class="step '+s.state+(g.current===s.role?" current":"")+'"><b>'+esc(s.label)+'</b>'+
+  (s.state==="done"?"✓ On file":s.state==="none_found"?"Marked not found":g.current===s.role?"← Do this now":"Waiting")+'</div>').join(""); }
+
+function guideHtml(g, prop){
+  const L = g.lookup || {};
+  let h = '<h3>Next step</h3><div style="font-size:16px;font-weight:800;margin-bottom:6px">'+esc(g.title)+'</div>';
+  if(g.current){
+    h += '<ol class="how">'+g.instructions.map(i=>'<li>'+esc(i)+'</li>').join("")+'</ol><div class="lookup">';
+    if(L.department) h += '<div>Department: <b>'+esc(L.department)+'</b></div>';
+    if(L.doc_number) h += '<div>Document #: <span class="copy">'+esc(L.doc_number)+'</span> <button class="link" data-copy="'+esc(L.doc_number)+'">Copy</button></div>';
+    if(L.recorded_date) h += '<div>Recorded: <b>'+esc(L.recorded_date)+'</b></div>';
+    if(L.borrower) h += '<div>Borrower: <b>'+esc(L.borrower)+'</b></div>';
+    if(L.lender) h += '<div>Lender: <b>'+esc(L.lender)+'</b></div>';
+    if(L.open_url) h += '<div style="margin-top:8px"><a class="btn primary" href="'+esc(L.open_url)+'" target="_blank" rel="noopener">Open the Clerk\'s site</a></div>';
+    h += '</div>';
+    if(g.current!=="notice") h += '<div class="field"><label>If you can\'t find it (add a note)</label><input id="nfNote" placeholder="e.g. searched by borrower name, nothing recorded"><div style="margin-top:6px"><button id="nfBtn">'+(g.current==="loan_doc"?"None found":"Not found")+'</button></div></div>';
+  } else h += '<div class="muted">This property has everything required. You can still add more loan documents below.</div>';
+  return h;
+}
+
+function expectedFor(role, d){
+  if(role==="notice") return d.property.doc_number;
+  if(role==="deed_of_trust"){ const n = d.files.filter(f=>f.doc_role==="notice"&&f.status==="uploaded").pop(); return n ? (n.fields.deed_instrument||"") : ""; }
+  return "";
+}
+
+function uploadHtml(d){
+  const cur_ = d.guidance.current || "loan_doc";
+  return '<h3>Upload a document</h3><div class="field"><label>Document type</label><select id="upRole">'+
+    Object.keys(ROLE_LABEL).map(r=>'<option value="'+r+'"'+(r===cur_?" selected":"")+'>'+ROLE_LABEL[r]+'</option>').join("")+'</select></div>'+
+    '<div class="field hidden" id="subWrap"><label>Loan document type</label><select id="upSub"><option value="">Choose…</option>'+SUBTYPES.map(s=>'<option value="'+s[0]+'">'+s[1]+'</option>').join("")+'</select></div>'+
+    '<div class="drop"><input type="file" id="upFile" accept="application/pdf,.pdf"><div style="margin-top:6px">PDF only, up to 25 MB. It is read on your computer; nothing is sent until you press Save.</div></div>'+
+    '<div id="ocrBox" class="hidden"><div class="muted" id="ocrMsg"></div><div class="bar"><div id="ocrBar"></div></div></div>'+
+    '<div id="fieldsBox"></div>';
+}
+
+function fieldsHtml(role, vals, expected){
+  let h = '<div style="margin-top:12px"><b>Check what was read</b> <span class="muted">(fix anything that looks wrong)</span></div>';
+  h += FIELDS[role].map(f=>'<div class="field"><label>'+esc(f[1])+'</label><input data-f="'+f[0]+'" type="'+(f[2]==="date"?"date":"text")+'" value="'+esc(vals[f[0]]||"")+'" class="'+(vals[f[0]]?"":"empty")+'"></div>').join("");
+  h += '<div id="stampBadge" style="margin:8px 0"></div><button class="primary" id="saveBtn">Save to this property</button>';
+  return h;
+}
+
+function stampBadge(expected){
+  const got = (document.querySelector('[data-f="stamp_doc"]')||{}).value || "";
+  let h;
+  if(!expected) h = '<span class="badge unk">No number to check against yet</span>';
+  else if(!got) h = '<span class="badge unk">Stamp number not read - confirm this is #'+esc(expected)+'</span>';
+  else if(got===expected) h = '<span class="badge ok">✓ Matches #'+esc(expected)+'</span>';
+  else h = '<span class="badge bad">Does NOT match #'+esc(expected)+' - check you have the right document</span>';
+  $("stampBadge").innerHTML = h;
+}
+
+function filesHtml(d){
+  const fs = d.files.filter(f=>f.status!=="removed");
+  if(!fs.length) return '<div class="muted">Nothing uploaded yet.</div>';
+  return fs.map(f=>{
+    const lab = ROLE_LABEL[f.doc_role] + (f.doc_subtype?" ("+f.doc_subtype+")":"");
+    const chk = f.stamp_matches===1?'<span class="badge ok">✓ number matches</span>':f.stamp_matches===0?'<span class="badge bad">number mismatch</span>':"";
+    if(f.status==="none_found") return '<div class="file"><div><b>'+esc(lab)+'</b>: marked not found<div class="muted">'+esc(f.note||"")+' · '+esc(f.by)+'</div></div><button data-rm="'+f.id+'">Undo</button></div>';
+    return '<div class="file"><div><b>'+esc(lab)+'</b> '+(f.doc_number?'#'+esc(f.doc_number):"")+' '+chk+'<div class="muted">'+esc(f.original_name)+' · '+esc(f.by)+' · '+esc((f.uploaded_at||"").slice(0,10))+'</div></div>'+
+      '<div><button data-view="'+f.id+'">View</button> <button data-rm="'+f.id+'">Remove</button></div></div>';
+  }).join("");
+}
+
+function renderProperty(d){
+  cur = d; const p = d.property;
+  $("ptitle").textContent = (p.address||"--") + ", " + (p.city||"") + " " + (p.zip||"");
+  $("psub").innerHTML = 'Notice #<span class="copy">'+esc(p.doc_number)+'</span> · sale month '+esc(p.year)+'-'+String(p.month||"").padStart(2,"0");
+  $("steps").innerHTML = stepsHtml(d.guidance);
+  $("guide").innerHTML = guideHtml(d.guidance, p);
+  $("uploadCard").innerHTML = uploadHtml(d);
+  $("files").innerHTML = filesHtml(d);
+  picked = null; setPreview(null);
+  $("guide").querySelectorAll("[data-copy]").forEach(b=>b.onclick=()=>copyText(b.dataset.copy));
+  const nf = $("nfBtn"); if(nf) nf.onclick = async ()=>{
+    try{ renderProperty(await api("/intake/api/property/"+p.id+"/none-found",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({doc_role:d.guidance.current,note:$("nfNote").value})})); toast("Saved"); }catch(e){ toast(e.message); } };
+  $("files").querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>window.open("/intake/api/file/"+b.dataset.view,"_blank"));
+  $("files").querySelectorAll("[data-rm]").forEach(b=>b.onclick=async ()=>{ if(!confirm("Remove this? The PDF is kept for the audit trail but is no longer used.")) return;
+    try{ renderProperty(await api("/intake/api/file/"+b.dataset.rm+"/remove",{method:"POST"})); toast("Removed"); }catch(e){ toast(e.message); } });
+  $("upRole").onchange = syncRole; $("upFile").onchange = onFile; syncRole();
+}
+function syncRole(){ $("subWrap").classList.toggle("hidden", $("upRole").value!=="loan_doc"); }
+function setPreview(file){
+  if(pickedUrl){ URL.revokeObjectURL(pickedUrl); pickedUrl=null; }
+  const f = $("preview");
+  if(!file){ f.classList.add("hidden"); f.removeAttribute("src"); $("prevHint").classList.remove("hidden"); return; }
+  pickedUrl = URL.createObjectURL(file); f.src = pickedUrl; f.classList.remove("hidden"); $("prevHint").classList.add("hidden");
+}
+
+/* ---------- reading the PDF in the browser ---------- */
+function loadScript(src){ return new Promise((res,rej)=>{
+  if(document.querySelector('script[src="'+src+'"]')) return res();
+  const s=document.createElement("script");
+  const fail=m=>{ clearTimeout(t); s.remove(); rej(new Error(m)); };   // a failed script is removed so a retry really retries
+  const t=setTimeout(()=>fail("timed out loading the reading tool"),25000);
+  s.src=src; s.onload=()=>{ clearTimeout(t); res(); }; s.onerror=()=>fail("could not load the reading tool");
+  document.head.appendChild(s); }); }
+async function readPdfText(file, maxPages, progress){
+  await loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const pdf = await pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
+  try{
+    const n = Math.min(pdf.numPages, maxPages);
+    let text = "";
+    for(let i=1;i<=n;i++){ progress("Checking page "+i+" of "+n+" for text…", (i-1)/n); const pg = await pdf.getPage(i); const c = await pg.getTextContent(); text += c.items.map(x=>x.str + (x.hasEOL ? "\n" : " ")).join("") + "\n"; }
+    if(text.replace(/\s/g,"").length > 300) return text;               // the PDF already has a text layer
+    await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js");
+    const worker = await Tesseract.createWorker("eng");
+    text = "";
+    try{
+      for(let i=1;i<=n;i++){
+        progress("Reading page "+i+" of "+n+" (this takes a little while)…", (i-1)/n);
+        const pg = await pdf.getPage(i), vp = pg.getViewport({scale:2.2}), cv = document.createElement("canvas");
+        cv.width = vp.width; cv.height = vp.height;
+        await pg.render({canvasContext: cv.getContext("2d"), viewport: vp}).promise;
+        text += (await worker.recognize(cv)).data.text + "\n";
+      }
+    } finally { await worker.terminate(); }
+    return text;
+  } finally { try{ await pdf.destroy(); }catch(e){} }   // release the document and its worker
+}
+
+async function onFile(){
+  const f = $("upFile").files[0]; picked = f || null; $("fieldsBox").innerHTML = ""; $("ocrBox").classList.add("hidden");
+  if(!f) return setPreview(null);
+  if(f.size > 25*1024*1024){ toast("That file is over 25 MB"); $("upFile").value=""; return; }
+  setPreview(f);
+  const role = $("upRole").value, expected = expectedFor(role, cur);
+  const prog = (m,p)=>{ $("ocrMsg").textContent=m; $("ocrBar").style.width=Math.round(p*100)+"%"; };
+  $("ocrBox").classList.remove("hidden"); prog("Starting…",0);
+  let vals = {};
+  try{
+    let text;
+    try{ text = await readPdfText(f, OCR_PAGES[role], prog); }
+    catch(first){                                   // the PDF reader sometimes needs a second try right after another document
+      prog("Trying again…", 0); await new Promise(r=>setTimeout(r, 1200));
+      text = await readPdfText(f, OCR_PAGES[role], prog);
+    }
+    const P = IntakeParse;
+    vals = role==="notice" ? P.parseNotice(text) : role==="deed_of_trust" ? P.parseDeedOfTrust(text) : P.parseLoanDoc(text);
+    if(role==="loan_doc" && vals.subtype && !$("upSub").value) $("upSub").value = vals.subtype;
+    $("ocrMsg").textContent = "Done reading. Please check the values below."; $("ocrBar").style.width="100%";
+  }catch(e){ $("ocrMsg").textContent = "Couldn't read this PDF automatically (" + e.message + "). Type the values from the document instead."; }
+  $("fieldsBox").innerHTML = fieldsHtml(role, vals, expected);
+  document.querySelectorAll("[data-f]").forEach(i=>i.oninput=()=>{ i.classList.toggle("empty", !i.value); if(i.dataset.f==="stamp_doc") stampBadge(expected); });
+  stampBadge(expected);
+  $("saveBtn").onclick = save;
+}
+
+async function save(){
+  const role = $("upRole").value, fields = {};
+  document.querySelectorAll("[data-f]").forEach(i=>{ if(i.value) fields[i.dataset.f] = i.value.trim(); });
+  if(role==="loan_doc" && !$("upSub").value){ toast("Choose the loan document type"); return; }
+  const fd = new FormData(); fd.append("file", picked); fd.append("doc_role", role); fd.append("doc_subtype", $("upSub").value); fd.append("fields", JSON.stringify(fields));
+  $("saveBtn").disabled = true; $("saveBtn").textContent = "Saving…";
+  try{
+    const j = await api("/intake/api/property/"+cur.property.id+"/upload",{method:"POST",body:fd});
+    renderProperty(j);
+    toast(j.stamp_matches===0 ? "Saved - but the number did not match, please double-check" : "Saved");
+    $("fieldsBox").innerHTML = "";
+  }catch(e){ toast(e.message); $("saveBtn").disabled=false; $("saveBtn").textContent="Save to this property"; }
+}
+
+/* ---------- routing ---------- */
+async function route(){
+  if(!me) return show("loginView");
+  const m = /^#p\/(\d+)$/.exec(location.hash);
+  try{
+    if(m){ show("propView"); renderProperty(await api("/intake/api/property/"+m[1])); window.scrollTo(0,0); }
+    else { show("listView"); await Promise.all([loadStats(), loadList()]); }
+  }catch(e){ toast(e.message); }
+}
+
+for(let i=1;i<=12;i++){ const o=document.createElement("option"); o.value=i; o.textContent=new Date(2000,i-1,1).toLocaleString("en-US",{month:"long"}); $("fmonth").appendChild(o); }
+$("loginBtn").onclick = login; $("password").onkeydown = e=>{ if(e.key==="Enter") login(); };
+$("fgo").onclick = ()=>{ page=1; loadList(); }; $("fq").onkeydown = e=>{ if(e.key==="Enter"){ page=1; loadList(); } };
+$("prev").onclick = ()=>{ if(page>1){ page--; loadList(); } }; $("next").onclick = ()=>{ page++; loadList(); };
+$("back").onclick = ()=>{ location.hash=""; };
+window.addEventListener("hashchange", route);
+(async ()=>{ try{ const j = await api("/intake/api/me"); if(j.user){ me=j.user; csrf=j.csrf; enter(); } else show("loginView"); }catch(e){ show("loginView"); } })();
+</script>
+</body>
+</html>

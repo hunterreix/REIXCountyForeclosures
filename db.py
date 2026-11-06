@@ -86,6 +86,28 @@ CREATE TABLE IF NOT EXISTS doc_resolution (
     last_attempt TEXT,
     message      TEXT
 );
+
+-- Deed history from the Bexar Central Appraisal District (BCAD) property record:
+-- the ownership transfers (vesting deeds) for a notice's property, newest first.
+-- Not the deed of trust being foreclosed -- that comes from the notice itself.
+-- Empty strings (not NULL) mean "not provided", so re-imports stay idempotent.
+CREATE TABLE IF NOT EXISTS property_deeds (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id       INTEGER NOT NULL,
+    bcad_property_id  TEXT NOT NULL DEFAULT '',
+    deed_date         TEXT NOT NULL DEFAULT '',   -- YYYY-MM-DD
+    deed_type         TEXT NOT NULL DEFAULT '',   -- e.g. WD
+    deed_type_desc    TEXT NOT NULL DEFAULT '',   -- e.g. Warranty Deed
+    grantor           TEXT NOT NULL DEFAULT '',
+    grantee           TEXT NOT NULL DEFAULT '',
+    volume            TEXT NOT NULL DEFAULT '',
+    page              TEXT NOT NULL DEFAULT '',
+    instrument_number TEXT NOT NULL DEFAULT '',
+    source            TEXT NOT NULL DEFAULT '',   -- bcad_manual | bcad_export
+    fetched_at        TEXT NOT NULL,
+    UNIQUE(property_id, deed_date, instrument_number, grantor, grantee)
+);
+CREATE INDEX IF NOT EXISTS idx_propdeeds_property ON property_deeds(property_id);
 """
 
 

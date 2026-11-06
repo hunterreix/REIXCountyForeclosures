@@ -29,6 +29,16 @@ app = Flask(__name__, static_folder="static", static_url_path="")
 # (CREATE TABLE IF NOT EXISTS).
 init_db()
 
+# Human document-intake tool (login, work list, PDF uploads) - see intake.py
+from intake import intake_bp, init_intake, require_user  # noqa: E402
+app.register_blueprint(intake_bp)
+init_intake(app)
+
+# How the REIX app stays in step with us (change feed, documents by property_key) - see sync_api.py
+from sync_api import sync_bp, attach_status  # noqa: E402
+from events import log_event  # noqa: E402
+app.register_blueprint(sync_bp)
+
 
 @app.after_request
 def add_cors_headers(resp):
@@ -97,6 +107,15 @@ def build_filters(args):
     if county:
         clauses.append("county = ?")
         params.append(county)
+
+    pkey = args.get("property_key", "").strip().lower()      # e.g. bexar-mortgage-20261000380
+    if pkey:
+        parts = pkey.split("-", 2)
+        if len(parts) == 3 and parts[1] in ("mortgage", "tax"):
+            clauses.append("LOWER(county) = ? AND source_layer = ? AND doc_number = ?")
+            params += [parts[0], parts[1], parts[2]]
+        else:
+            clauses.append("1 = 0")
 
     q = args.get("q", "").strip()
     if q:
@@ -181,6 +200,44 @@ def attach_documents(conn, items):
     return items
 
 
+# Link to a property's record on BCAD's property search (stable, opens directly).
+BCAD_PROPERTY_URL = "https://hgo.harrisgovern.com/bexar/property/{year}-{pid}"
+DEED_HISTORY_LIMIT = 3
+
+
+def attach_deeds(conn, items):
+    """Adds the latest few ownership transfers (from the BCAD record) to each
+    property: deed_history (newest first), last_transfer, and a bcad_url."""
+    ids = [i["id"] for i in items]
+    for i in items:
+        i["deed_history"] = []
+        i["last_transfer"] = None
+        i["bcad_url"] = None
+    if not ids:
+        return items
+    marks = ",".join("?" * len(ids))
+    rows = conn.execute(
+        f"""SELECT property_id, bcad_property_id, deed_date, deed_type,
+                   deed_type_desc, grantor, grantee, volume, page, instrument_number
+            FROM property_deeds WHERE property_id IN ({marks})
+            ORDER BY (deed_date = ''), deed_date DESC, id DESC""",
+        ids,
+    ).fetchall()
+    by_id = {i["id"]: i for i in items}
+    for r in rows:
+        d = dict(r)
+        item = by_id[d.pop("property_id")]
+        bcad = d.pop("bcad_property_id")
+        if bcad and not item["bcad_url"]:
+            item["bcad_url"] = BCAD_PROPERTY_URL.format(year=dt.date.today().year, pid=bcad)
+        if len(item["deed_history"]) < DEED_HISTORY_LIMIT:
+            item["deed_history"].append(d)
+    for i in items:
+        if i["deed_history"]:
+            i["last_transfer"] = i["deed_history"][0]
+    return items
+
+
 def query_properties(args):
     conn = get_conn()
     where, params = build_filters(args)
@@ -197,7 +254,7 @@ def query_properties(args):
             LIMIT ? OFFSET ?""",
         params + [per_page, offset],
     ).fetchall()
-    results = attach_documents(conn, [row_to_dict(r) for r in rows])
+    results = attach_status(conn, attach_deeds(conn, attach_documents(conn, [row_to_dict(r) for r in rows])))
     conn.close()
 
     return {
@@ -306,12 +363,14 @@ def public_meta():
 # --------------------------------------------------------------------------
 
 @app.route("/api/v1/keys", methods=["POST"])
+@require_user
 def create_key():
-    """Instant self-serve API key. No approval queue, on purpose -- we want
-    this to be the easiest possible way for an app to plug into our feed."""
+    """API key for a signed-in user. (Keys used to be open to anyone; that would let
+    anyone get around the sign-in on the list, so creating one now requires an account.)
+    Sign in with POST /auth/login, then send the returned csrf as X-CSRF-Token."""
     body = request.get_json(silent=True) or {}
     name = (body.get("name") or "").strip()[:120]
-    email = (body.get("email") or "").strip()[:200]
+    email = request.intake_user["email"]
 
     new_key = "reix_" + secrets.token_urlsafe(24)
     conn = get_conn()
@@ -352,7 +411,7 @@ def v1_property_detail(property_id):
     if not row:
         conn.close()
         return jsonify({"error": "not found"}), 404
-    item = attach_documents(conn, [row_to_dict(row)])[0]
+    item = attach_status(conn, attach_deeds(conn, attach_documents(conn, [row_to_dict(row)])))[0]
     conn.close()
     return jsonify(item)
 
@@ -457,6 +516,69 @@ def internal_docs_post():
     conn.commit()
     conn.close()
     return jsonify({"status": "ok", "documents_saved": saved})
+
+
+@app.route("/internal/deeds", methods=["POST"])
+def internal_deeds_post():
+    """Loads BCAD deed history for one notice's property. Secret-protected and
+    idempotent. Body:
+      {"notice_doc_number": "20261000380", "county": "Bexar",
+       "bcad_property_id": "393837",
+       "deeds": [{"deed_date": "2023-04-04", "deed_type": "WD",
+                  "deed_type_desc": "Warranty Deed", "grantor": "...",
+                  "grantee": "...", "volume": "", "page": "",
+                  "instrument_number": "20230062125"}]}"""
+    import re
+    if not _sync_secret_ok():
+        return jsonify({"error": "unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    doc = str(body.get("notice_doc_number") or "").strip()
+    county = str(body.get("county") or "Bexar").strip()
+    bcad = str(body.get("bcad_property_id") or "").strip()
+    source = str(body.get("source") or "bcad_manual").strip()[:20]
+    if not doc or (bcad and not bcad.isdigit()):
+        return jsonify({"error": "notice_doc_number required; bcad_property_id must be digits"}), 400
+
+    conn = get_conn()
+    prop = conn.execute(
+        "SELECT id FROM properties WHERE county = ? AND doc_number = ?", (county, doc)
+    ).fetchone()
+    if not prop:
+        conn.close()
+        return jsonify({"error": "unknown notice"}), 404
+
+    now = dt.datetime.utcnow().isoformat()
+    saved, skipped = 0, []
+    for n, d in enumerate((body.get("deeds") or [])[:25]):
+        date = str(d.get("deed_date") or "").strip()
+        inst = str(d.get("instrument_number") or "").strip()
+        if inst == "0":          # BCAD shows 0 for old deeds recorded by volume/page only
+            inst = ""
+        if (date and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date)) or \
+           (inst and not re.fullmatch(r"\d{1,20}", inst)):
+            skipped.append({"row": n, "reason": "bad deed_date or instrument_number"})
+            continue
+        clean = lambda k, w=120: str(d.get(k) or "").strip()[:w]
+        conn.execute(
+            """INSERT INTO property_deeds
+                 (property_id, bcad_property_id, deed_date, deed_type, deed_type_desc,
+                  grantor, grantee, volume, page, instrument_number, source, fetched_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(property_id, deed_date, instrument_number, grantor, grantee)
+               DO UPDATE SET bcad_property_id=excluded.bcad_property_id,
+                 deed_type=excluded.deed_type, deed_type_desc=excluded.deed_type_desc,
+                 volume=excluded.volume, page=excluded.page,
+                 source=excluded.source, fetched_at=excluded.fetched_at""",
+            (prop["id"], bcad, date, clean("deed_type", 10), clean("deed_type_desc"),
+             clean("grantor"), clean("grantee"), clean("volume", 12), clean("page", 12),
+             inst, source, now),
+        )
+        saved += 1
+    if saved:
+        log_event(conn, prop["id"], "deeds_updated", None, f"{saved} deed rows")
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "ok", "deeds_saved": saved, "skipped": skipped})
 
 
 @app.route("/health")

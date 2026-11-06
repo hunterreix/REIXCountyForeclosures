@@ -57,6 +57,8 @@
   .doc-chips{margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;}
   a.chip{font-size:11px;font-weight:600;color:var(--accent);background:#eef4f2;border-radius:999px;padding:2px 8px;text-decoration:none;white-space:nowrap;}
   a.chip:hover{background:#dcebe6;}
+  .transfer{font-size:11px;color:var(--sub);margin-top:2px;}
+  .transfer a{color:var(--sub);text-decoration:none;border-bottom:1px dotted var(--sub);}
   .view-btn{background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:700;text-decoration:none;white-space:nowrap;}
 
   .pager{display:flex;justify-content:center;align-items:center;gap:14px;padding:16px 0;font-size:14px;}
@@ -84,15 +86,30 @@
     transition:opacity .2s ease, transform .2s ease;z-index:100;display:flex;align-items:center;gap:8px;}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
   .toast .check{color:#5fd39a;font-weight:800;}
+  .gate{position:fixed;inset:0;background:var(--bg);z-index:200;display:none;align-items:center;justify-content:center;padding:16px;}
+  .gate .box{background:#fff;border:1px solid var(--line);border-radius:14px;padding:26px;width:min(380px,100%);box-shadow:0 10px 40px rgba(0,0,0,.08);}
+  .gate h2{margin:0 0 4px;font-size:19px;} .gate p{margin:0 0 12px;color:var(--sub);font-size:13px;line-height:1.5;}
+  .gate label{display:block;font-size:12px;color:var(--sub);margin:10px 0 4px;} .gate input{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-size:14px;}
+  .gate button{margin-top:14px;width:100%;background:var(--accent);color:#fff;border:none;padding:10px;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer;}
+  .gate .err{color:#c0392b;font-size:13px;margin-top:8px;min-height:18px;}
+  .who{font-size:12px;color:var(--sub);margin-right:12px;} .who button{border:none;background:none;color:var(--accent);font-weight:700;cursor:pointer;padding:0 0 0 6px;font-size:12px;}
 </style>
 </head>
 <body>
 
+<div id="gate" class="gate"><div class="box">
+  <h2>Texas Foreclosure Notices</h2>
+  <p>Sign in to see the list, map and summary. Accounts are issued by REIX.</p>
+  <label for="gEmail">Email</label><input id="gEmail" type="email" autocomplete="username">
+  <label for="gPass">Password</label><input id="gPass" type="password" autocomplete="current-password">
+  <button id="gBtn">Sign in</button><div class="err" id="gErr"></div>
+  <p style="margin-top:14px">Need access? <a href="https://app.reix.co/" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600">Get started on REIX</a></p>
+</div></div>
 <div id="toast" class="toast"><span class="check">&check;</span> <span id="toastMsg">Address Copied</span></div>
 
 <header>
   <div class="brand"><span class="dot"></span> REIX Foreclosure Finder</div>
-  <a class="cta" href="https://app.reix.co/" target="_blank" rel="noopener">Open Full App on REIX →</a>
+  <div style="display:flex;align-items:center"><span class="who" id="who"></span><a class="cta" href="https://app.reix.co/" target="_blank" rel="noopener">Open Full App on REIX →</a></div>
 </header>
 <div class="sub-bar">Texas foreclosure notices &middot; sourced directly from participating county clerk systems &middot; <a href="/docs">Free API for developers</a></div>
 
@@ -171,6 +188,37 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const REIX_URL = "https://app.reix.co/";
+
+// ---- sign-in: the list, map and summary are for signed-in users only ----
+let csrfToken = "";
+const _fetch = window.fetch.bind(window);
+window.fetch = async function(){                       // if the session expires, go back to the sign-in screen
+  const r = await _fetch.apply(null, arguments);
+  if(r.status === 401 && String(arguments[0]).indexOf("/api/public/") === 0) showGate();
+  return r;
+};
+function showGate(){ document.getElementById("gate").style.display = "flex"; }
+function hideGate(){ document.getElementById("gate").style.display = "none"; }
+async function gateLogin(){
+  document.getElementById("gErr").textContent = "";
+  const r = await _fetch("/auth/login", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({email: document.getElementById("gEmail").value, password: document.getElementById("gPass").value})});
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok){ document.getElementById("gErr").textContent = j.error || "Couldn't sign in"; return; }
+  csrfToken = j.csrf; document.getElementById("gPass").value = ""; startApp(j.user);
+}
+async function signOut(){
+  await _fetch("/auth/logout", {method:"POST", headers:{"X-CSRF-Token": csrfToken}});
+  location.reload();
+}
+let started = false;
+function startApp(user){
+  hideGate();
+  document.getElementById("who").innerHTML = escapeAttr(user.name || user.email) + ' <button id="outBtn">Sign out</button>';
+  document.getElementById("outBtn").onclick = signOut;
+  if(started) return; started = true;
+  loadMeta(); loadList();
+}
 let state = { page: 1, per_page: 25, q: "", type: "", city: "", county: "" };
 let map, markersLayer;
 
@@ -313,6 +361,24 @@ function docCell(r){
   return html;
 }
 
+function fmtDeedDate(iso){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+  if(!m) return "";
+  return new Date(+m[1], +m[2]-1, +m[3]).toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"});
+}
+
+// Small "last deed" line under the address, from the BCAD record's deed history
+function transferLine(r){
+  const t = r.last_transfer;
+  if(!t) return "";
+  const when = fmtDeedDate(t.deed_date);
+  const label = "Last deed" + (when ? " " + when : "") + (t.grantee ? " &rarr; " + escapeAttr(t.grantee) : "");
+  const inner = r.bcad_url
+    ? `<a href="${escapeAttr(r.bcad_url)}" target="_blank" rel="noopener" title="Open this property's record on BCAD">${label}</a>`
+    : label;
+  return `<div class="transfer">${inner}</div>`;
+}
+
 function renderRows(rows){
   const container = document.getElementById("listContainer");
   if(!rows.length){
@@ -329,7 +395,7 @@ function renderRows(rows){
     html += `<tr>
       <td>${r.county || "--"}</td>
       <td><span class="pill ${r.type}">${r.type}</span></td>
-      <td>${r.address || "--"}</td>
+      <td>${r.address || "--"}${transferLine(r)}</td>
       <td>${r.city || "--"}</td>
       <td>${r.zip || "--"}</td>
       <td>${docCell(r)}</td>
@@ -464,8 +530,14 @@ document.getElementById("q").addEventListener("keydown", e=>{ if(e.key==="Enter"
 document.getElementById("prevBtn").addEventListener("click", ()=>{ if(state.page>1){ state.page--; loadList(); }});
 document.getElementById("nextBtn").addEventListener("click", ()=>{ state.page++; loadList(); });
 
-loadMeta();
-loadList();
+document.getElementById("gBtn").onclick = gateLogin;
+document.getElementById("gPass").onkeydown = e=>{ if(e.key === "Enter") gateLogin(); };
+(async ()=>{
+  try{
+    const j = await (await _fetch("/auth/me")).json();
+    if(j.user){ csrfToken = j.csrf; startApp(j.user); } else showGate();
+  }catch(e){ showGate(); }
+})();
 </script>
 </body>
 </html>

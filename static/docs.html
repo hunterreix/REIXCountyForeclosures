@@ -38,18 +38,24 @@
   County Clerk's public feed, cleaned up, and served as simple JSON. Free to use. Get a key in one request.</p>
 
   <h2>1. Get an API key</h2>
-  <p>No sign-up form, no waiting — post your name/email (optional) and get a key back instantly:</p>
-  <pre>curl -X POST https://YOUR-DOMAIN/api/v1/keys \
+  <p>API keys are issued to signed-in accounts. Accounts are created by REIX. Sign in, then create a key:</p>
+  <pre># 1) sign in (keep the cookie; the response contains a csrf token)
+curl -c jar.txt -X POST https://YOUR-DOMAIN/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"name": "Acme Real Estate App", "email": "dev@acme.com"}'</pre>
+  -d '{"email": "you@company.com", "password": "YOUR-PASSWORD"}'
+
+# 2) create a key, sending that csrf token
+curl -b jar.txt -X POST https://YOUR-DOMAIN/api/v1/keys \
+  -H "Content-Type: application/json" -H "X-CSRF-Token: THE-CSRF-FROM-STEP-1" \
+  -d '{"name": "Acme Real Estate App"}'</pre>
   <p>Response:</p>
   <pre>{
   "api_key": "reix_AbCdEf123...",
   "usage": "Send this as the 'X-API-Key' header on requests to /api/v1/*",
   "docs": "/docs"
 }</pre>
-  <div class="note">Keep your key private. It's tied to a usage counter, not a hard rate limit today —
-  but please be reasonable (poll hourly at most; the underlying county data refreshes on that cadence anyway).</div>
+  <div class="note">Keep your key private. Access to scanned court documents (PDFs) is not included in an
+  ordinary key; REIX grants it per key to approved partners.</div>
 
   <h2>2. Authenticate requests</h2>
   <pre>curl https://YOUR-DOMAIN/api/v1/properties \
@@ -62,7 +68,9 @@
     <tr><td><span class="badge">GET</span>/api/v1/properties/:id</td><td>Single property record</td></tr>
     <tr><td><span class="badge">GET</span>/api/v1/stats/summary</td><td>Counts by type, city, month</td></tr>
     <tr><td><span class="badge">GET</span>/api/v1/meta</td><td>Valid filter values (cities, types)</td></tr>
-    <tr><td><span class="badge">POST</span>/api/v1/keys</td><td>Create a new API key</td></tr>
+    <tr><td><span class="badge">GET</span>/api/v1/properties?property_key=bexar-mortgage-20261000380</td><td>One property by its stable key</td></tr>
+    <tr><td><span class="badge">GET</span>/api/v1/changes?after=&lt;cursor&gt;</td><td>What changed since your last check (new notices, new or removed documents). Every property has a stable <code>property_key</code>; documents may arrive days after the property.</td></tr>
+    <tr><td><span class="badge">POST</span>/api/v1/keys</td><td>Create an API key (signed-in account required)</td></tr>
   </table>
 
   <h2>4. Query parameters (GET /api/v1/properties)</h2>
@@ -101,7 +109,9 @@
       "month": 8,
       "lat": 29.451,
       "lon": -98.521,
-      "doc_link": "https://bexar.tx.publicsearch.us/results?searchType=quickSearch&query=20260012345",
+      "doc_link": "https://bexar.tx.publicsearch.us/doc/330707027",
+      "doc_link_is_direct": true,
+      "documents": [{"doc_role": "notice", "doc_number": "20260012345", "doc_type": "NOTICE OF FORECLOSE", "recorded_date": "2026-09-11", "url": "https://bexar.tx.publicsearch.us/doc/330707027", "confidence": "high"}],
       "first_seen": "2026-07-01T04:00:00",
       "last_seen": "2026-07-24T04:00:00",
       "reix_link": "https://app.reix.co/"
@@ -112,6 +122,10 @@
   "total": 812,
   "total_pages": 33
 }</pre>
+
+  <div class="note"><b>doc_link</b> is the direct link to the recorded foreclosure notice on the County Clerk's
+  site once we have matched it (<code>doc_link_is_direct: true</code>). Until then it points to the Clerk's
+  search home page (<code>false</code>). <code>documents</code> lists every linked courthouse document.</div>
 
   <h2>6. Attribution &amp; fair use</h2>
   <p>This feed is a convenience layer on top of Bexar County's public foreclosure notice data.

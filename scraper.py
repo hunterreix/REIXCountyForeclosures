@@ -13,6 +13,7 @@ import sys
 import time
 
 from db import get_conn, init_db
+from events import log_event
 from sources.registry import ENABLED_SOURCES
 
 
@@ -37,7 +38,7 @@ def upsert_records(conn, records) -> tuple[int, int]:
             )
             updated += 1
         else:
-            conn.execute(
+            cur = conn.execute(
                 """INSERT INTO properties
                     (county, source_layer, doc_number, address, city, zip, school_dist,
                      year, month, lat, lon, object_id, doc_link, first_seen, last_seen)
@@ -45,6 +46,7 @@ def upsert_records(conn, records) -> tuple[int, int]:
                 (r.county, r.source_layer, r.doc_number, r.address, r.city, r.zip,
                  r.school_dist, r.year, r.month, r.lat, r.lon, None, r.doc_link, now, now),
             )
+            log_event(conn, cur.lastrowid, "property_added")   # lets the REIX app learn about new notices
             inserted += 1
 
     conn.commit()
