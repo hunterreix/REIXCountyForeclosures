@@ -113,7 +113,7 @@ const OCR_PAGES = {notice:4, deed_of_trust:2, loan_doc:3};
 const SUBTYPES = [["assignment","Assignment"],["note","Note"],["lien","Lien"],["release","Release"],["other","Other"]];
 const FIELDS = {
   notice:[["stamp_doc","Document # stamped on the notice","num"],["stamp_date","Recorded date (stamp)","date"],["deed_instrument","Deed of Trust document #","num"],["deed_recorded","Deed of Trust recorded on","date"],["deed_dated","Deed of Trust dated","date"],["borrower","Borrower","text"],["lender","Lender / beneficiary","text"],["principal","Original loan amount","text"],["sale_date","Sale date","date"]],
-  deed_of_trust:[["stamp_doc","Document # stamped on the deed","num"],["stamp_date","Recorded date (stamp)","date"],["dated","Dated","date"],["borrower","Borrower (grantor)","text"],["lender","Lender (beneficiary)","text"],["trustee","Trustee","text"],["principal","Loan amount","text"]],
+  deed_of_trust:[["stamp_doc","Document # stamped on the deed","num"],["stamp_date","Recorded date (stamp)","date"],["dated","Dated","date"],["borrower","Grantor(s) / Borrower(s)","text"],["lender","Lender (beneficiary)","text"],["trustee","DOT Lender Trustee","text"],["loan_number","Loan #","text"],["maturity_date","Loan end date (payoff date)","date"],["principal","Original loan amount","text"]],
   loan_doc:[["stamp_doc","Document # stamped on the document","num"],["stamp_date","Recorded date (stamp)","date"],["assignor","Assignor / lienholder","text"],["assignee","Assignee","text"],["references","Deed of Trust # it refers to","num"],["principal","Amount","text"]]
 };
 
@@ -191,6 +191,7 @@ function guideHtml(g, prop){
     if(L.recorded_date) h += '<div>Recorded: <b>'+esc(L.recorded_date)+'</b></div>';
     if(L.borrower) h += '<div>Borrower: <b>'+esc(L.borrower)+'</b></div>';
     if(L.lender) h += '<div>Lender: <b>'+esc(L.lender)+'</b></div>';
+    if(L.loan_number) h += '<div>Loan #: <b>'+esc(L.loan_number)+'</b></div>';
     if(L.open_url) h += '<div style="margin-top:8px"><a class="btn primary" href="'+esc(L.open_url)+'" target="_blank" rel="noopener">Open the Clerk\'s site</a></div>';
     h += '</div>';
     if(g.current!=="notice") h += '<div class="field"><label>If you can\'t find it (add a note)</label><input id="nfNote" placeholder="e.g. searched by borrower name, nothing recorded"><div style="margin-top:6px"><button id="nfBtn">'+(g.current==="loan_doc"?"None found":"Not found")+'</button></div></div>';
