@@ -69,20 +69,26 @@
 
   // A "Label: value" read to the end of the line, but never past the next label
   // (some PDFs/OCR runs lose their line breaks, which would glue fields together).
-  var NEXT_LABEL = /\s+(?:Grantor|Beneficiary|Lender|Trustee|Assignor|Assignee|Property|Principal|Date|Dated)\s*[:\-]/i;
+  var NEXT_LABEL = /\s+(?:(?:(?:Grantors?|Borrowers?|Trustors?)(?:\(s\))?|Beneficiary|Lender|Trustee|Assignor|Assignee|Property|Principal|Maturity(?:\s+Date)?|Date|Dated)\s*[:\-]|Loan\s*(?:No\.?|Number|#))/i;
   function line(re, text) {
     var m = re.exec(text); if (!m) return "";
     return tidy(m[1].split(NEXT_LABEL)[0]).slice(0, 120);
   }
+
+  // When the note is due in full (the "loan end date" / payoff date)
+  var MATURITY = new RegExp("(?:Maturity\\s+Date|Date\\s+of\\s+Maturity|matures?\\s+on|due\\s+and\\s+payable\\s+(?:in\\s+full\\s+)?on|final\\s+(?:payment|installment)[^.]{0,80}?(?:due|payable)\\s+on)\\s*[:\\-]?\\s*(" + DATE_SRC + ")", "i");
 
   function parseDeedOfTrust(text) {
     var stamp = findStamp(text), t = flat(text), x = String(text || "");
     var dated = first(new RegExp("(?:dated|Date)\\s*[:\\-]?\\s*(" + DATE_SRC + ")", "i"), t);
     return {
       stamp_doc: stamp.doc, stamp_date: stamp.date, dated: toIso(dated),
-      borrower: line(/Grantor(?:\(s\))?\s*[:\-]\s*([^\n]{2,100})/i, x),
+      // the person who signs the deed of trust is called Grantor(s), Borrower(s) or Trustor(s), depending on the lender's form
+      borrower: line(/(?:Grantors?|Borrowers?|Trustors?)(?:\(s\))?\s*[:\-]\s*([^\n]{2,100})/i, x),
       lender: line(/(?:Beneficiary|Lender)\s*[:\-]\s*([^\n]{2,100})/i, x),
       trustee: line(/Trustee\s*[:\-]\s*([^\n]{2,100})/i, x),
+      loan_number: first(/Loan\s*(?:No\.?|Number|#)\s*[:.]?\s*([A-Za-z0-9][A-Za-z0-9\-\/]{3,30})/i, t),
+      maturity_date: toIso(first(MATURITY, t)),
       principal: principalOf(t),
       _looksLikeDeedOfTrust: /DEED\s+OF\s+TRUST/i.test(t)
     };
