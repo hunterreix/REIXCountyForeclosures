@@ -107,7 +107,18 @@
     };
   }
 
-  var api = { toIso: toIso, findStamp: findStamp, parseNotice: parseNotice, parseDeedOfTrust: parseDeedOfTrust, parseLoanDoc: parseLoanDoc };
+  // Any other document: read the recording stamp, and guess a title from its first ALL-CAPS heading line
+  function parseOtherDoc(text) {
+    var stamp = findStamp(text), lines = String(text || "").split(/\n/), title = "", i, l;
+    for (i = 0; i < lines.length; i++) {
+      l = tidy(lines[i]);
+      if (!l || /^Doc\s*#/i.test(l)) continue;
+      if (/^[A-Z][A-Z0-9 \-&',.\/]{5,80}$/.test(l) && /[A-Z]{3}/.test(l)) { title = l; break; }
+    }
+    return { stamp_doc: stamp.doc, stamp_date: stamp.date, title: title };
+  }
+
+  var api = { toIso: toIso, findStamp: findStamp, parseNotice: parseNotice, parseDeedOfTrust: parseDeedOfTrust, parseLoanDoc: parseLoanDoc, parseOtherDoc: parseOtherDoc };
   root.IntakeParse = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);
