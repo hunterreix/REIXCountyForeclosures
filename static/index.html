@@ -293,7 +293,7 @@ function showDocs(id){
   const r = DOC_ROWS[id]; if(!r || !r.doc_files) return;
   const f = r.doc_facts || {};
   let h = "<h3>Documents</h3><div class=\"sub\">" + escapeAttr(r.full_address || r.address || "") + " &middot; Notice #" + escapeAttr(r.doc_number) + "</div>";
-  h += "<h4>Files</h4>" + r.doc_files.map(d => '<div class="docfile"><span><b>' + escapeAttr(d.label) + "</b>" + (d.subtype ? " (" + escapeAttr(d.subtype) + ")" : "") +
+  h += "<h4>Files</h4>" + r.doc_files.map(d => '<div class="docfile"><span><b>' + escapeAttr(d.title || d.label) + "</b>" + (d.subtype ? " (" + escapeAttr(d.subtype) + ")" : "") +
         '</span><a href="' + escapeAttr(d.url) + '" target="_blank" rel="noopener">View PDF</a></div>').join("");
   if(f.loan_doc_none_found) h += '<div class="docfile"><span><b>Loan document</b>: none found on record</span></div>';
   const dot = factTable(f.deed_of_trust, ["dated","stamp_doc","stamp_date","borrower","lender","trustee","loan_number","maturity_date","principal"]);
