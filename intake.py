@@ -55,7 +55,8 @@ FIELD_RULES = {
     "notice": {"stamp_doc": "num", "stamp_date": "date", "deed_instrument": "num", "deed_recorded": "date",
                "deed_dated": "date", "borrower": "text", "lender": "text", "principal": "text", "sale_date": "date"},
     "deed_of_trust": {"stamp_doc": "num", "stamp_date": "date", "dated": "date", "borrower": "text",
-                      "lender": "text", "trustee": "text", "principal": "text"},
+                      "lender": "text", "trustee": "text", "loan_number": "text", "maturity_date": "date",
+                      "principal": "text"},   # trustee = "DOT Lender Trustee"; maturity_date = loan end / payoff date
     "loan_doc": {"stamp_doc": "num", "stamp_date": "date", "assignor": "text", "assignee": "text",
                  "references": "num", "principal": "text"},
 }
@@ -373,7 +374,8 @@ def build_guidance(prop, files):
         g.update(title="Find the loan document (assignment, note, lien or release)",
                  lookup={"doc_number": df.get("stamp_doc", "") or nf.get("deed_instrument", ""), "department": "Land Records",
                          "borrower": df.get("borrower", "") or nf.get("borrower", ""),
-                         "lender": df.get("lender", "") or nf.get("lender", ""), "open_url": CLERK_HOME},
+                         "lender": df.get("lender", "") or nf.get("lender", ""),
+                         "loan_number": df.get("loan_number", ""), "open_url": CLERK_HOME},
                  instructions=["In Land Records, search the borrower's name and look for an ASSIGNMENT OF DEED OF TRUST, "
                                "a lien or a release recorded after the deed of trust date.",
                                "Upload each one you find (choose the type). If there is none, use 'None found'."])
@@ -630,6 +632,77 @@ def get_file(fid):
     path = os.path.realpath(os.path.join(DOCS_DIR, row["stored_path"]))
     if not path.startswith(os.path.realpath(DOCS_DIR) + os.sep) or not os.path.isfile(path):
         return jsonify({"error": "not found"}), 404
+    resp = send_file(path, mimetype="application/pdf", download_name=row["original_name"] or "document.pdf")
+    resp.headers["Cache-Control"] = "private, no-store"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    return resp
+
+
+# ------------------------------------------------------------------ documents shown in the search list
+# Signed-in users see a "Documents" button on a property once ALL of its documents are in
+# (notice, deed of trust, and a loan document or a "none found"). Staff can open any uploaded file.
+FACT_KEYS = {
+    "notice": ("stamp_doc", "stamp_date", "sale_date", "deed_instrument"),
+    "deed_of_trust": ("stamp_doc", "stamp_date", "dated", "borrower", "lender", "trustee",
+                      "loan_number", "maturity_date", "principal"),
+    "loan_doc": ("stamp_doc", "stamp_date", "assignor", "assignee", "references", "principal"),
+}
+
+
+def _complete(files):
+    return (_role_state(files, "notice") == "done" and _role_state(files, "deed_of_trust") == "done"
+            and _role_state(files, "loan_doc") in ("done", "none_found"))
+
+
+def attach_viewer_docs(conn, items):
+    """Adds doc_files (PDF links) and doc_facts to each property whose documents are complete."""
+    for i in items:
+        i["doc_files"], i["doc_facts"] = [], None
+    ids = [i["id"] for i in items if i.get("docs_complete")]
+    if not ids:
+        return items
+    files_by = _file_rows(conn, ids)
+    for i in items:
+        if i["id"] not in ids:
+            continue
+        facts = {"notice": {}, "deed_of_trust": {}, "loan_docs": [], "loan_doc_none_found": False}
+        for f in files_by.get(i["id"], []):
+            if f["status"] == "none_found":
+                facts["loan_doc_none_found"] = facts["loan_doc_none_found"] or f["doc_role"] == "loan_doc"
+                continue
+            if f["status"] != "uploaded":
+                continue
+            i["doc_files"].append({"id": f["id"], "role": f["doc_role"], "label": ROLE_LABELS[f["doc_role"]],
+                                   "subtype": f["doc_subtype"] or None, "uploaded_at": f["uploaded_at"],
+                                   "url": f"/api/public/files/{f['id']}"})
+            picked = {k: v for k, v in f["fields"].items() if k in FACT_KEYS[f["doc_role"]]}
+            if f["doc_role"] == "loan_doc":
+                picked["type"] = f["doc_subtype"] or ""
+                facts["loan_docs"].append(picked)
+            else:
+                facts[f["doc_role"]] = picked
+        i["doc_facts"] = facts
+    return items
+
+
+@intake_bp.route("/api/public/files/<int:fid>")
+def public_file(fid):
+    u = _user()
+    if not u:
+        return jsonify({"error": "login required"}), 401
+    conn = get_conn()
+    row = conn.execute("SELECT property_id, stored_path, original_name FROM property_files "
+                       "WHERE id = ? AND status = 'uploaded'", (fid,)).fetchone()
+    if row and u["role"] not in ("intake", "admin"):
+        # everyone else may only open the files of properties whose documents are all in
+        if not _complete(_file_rows(conn, [row["property_id"]]).get(row["property_id"], [])):
+            row = None
+    conn.close()
+    if not row or not row["stored_path"]:
+        return jsonify({"error": "not available"}), 404
+    path = os.path.realpath(os.path.join(DOCS_DIR, row["stored_path"]))
+    if not path.startswith(os.path.realpath(DOCS_DIR) + os.sep) or not os.path.isfile(path):
+        return jsonify({"error": "not available"}), 404
     resp = send_file(path, mimetype="application/pdf", download_name=row["original_name"] or "document.pdf")
     resp.headers["Cache-Control"] = "private, no-store"
     resp.headers["X-Content-Type-Options"] = "nosniff"
