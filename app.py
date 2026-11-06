@@ -30,7 +30,7 @@ app = Flask(__name__, static_folder="static", static_url_path="")
 init_db()
 
 # Human document-intake tool (login, work list, PDF uploads) - see intake.py
-from intake import intake_bp, init_intake, require_user  # noqa: E402
+from intake import intake_bp, init_intake, require_user, attach_viewer_docs  # noqa: E402
 app.register_blueprint(intake_bp)
 init_intake(app)
 
@@ -116,6 +116,13 @@ def build_filters(args):
             params += [parts[0], parts[1], parts[2]]
         else:
             clauses.append("1 = 0")
+
+    if args.get("docs") == "complete":          # only properties whose documents are all in
+        have = ("EXISTS (SELECT 1 FROM property_files f WHERE f.property_id = properties.id "
+                "AND f.doc_role = '{r}' AND f.status IN ({s}))")
+        clauses.append(" AND ".join([have.format(r="notice", s="'uploaded'"),
+                                     have.format(r="deed_of_trust", s="'uploaded'"),
+                                     have.format(r="loan_doc", s="'uploaded','none_found'")]))
 
     q = args.get("q", "").strip()
     if q:
@@ -345,7 +352,11 @@ def require_api_key():
 
 @app.route("/api/public/properties")
 def public_properties():
-    return jsonify(query_properties(request.args))
+    data = query_properties(request.args)
+    conn = get_conn()
+    attach_viewer_docs(conn, data["results"])   # PDF links + key facts, only where all documents are in
+    conn.close()
+    return jsonify(data)
 
 
 @app.route("/api/public/stats/summary")
