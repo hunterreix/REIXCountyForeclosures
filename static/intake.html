@@ -32,6 +32,8 @@
   .pill.done{background:#e3f3ec;color:var(--accent);} .pill.missing{background:#f1f2f4;color:#8a929c;} .pill.none_found{background:#fff3e6;color:var(--warn);}
   .pager{display:flex;gap:12px;justify-content:center;align-items:center;padding:12px;font-size:13px;}
   .steps{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;} .step{flex:1;min-width:150px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fff;font-size:13px;}
+  .step.optional{border-style:dashed;background:#fcfcfd;}
+  .prog{display:flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap;} .prog .track{width:70px;height:8px;background:#eceff2;border-radius:6px;overflow:hidden;} .prog .track>div{height:100%;background:var(--accent);}
   .step b{display:block;font-size:12px;color:var(--sub);text-transform:uppercase;} .step.done{border-color:var(--accent);background:#f2faf6;} .step.current{border-color:var(--ink);box-shadow:0 0 0 2px #1b1f2422;} .step.none_found{border-color:var(--warn);background:#fff8f0;}
   .grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;} @media(max-width:900px){.grid2{grid-template-columns:1fr;}}
   .lookup{background:#f6f8fa;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:10px 0;font-size:13px;} .lookup div{margin:3px 0;}
@@ -88,7 +90,7 @@
   <!-- ONE PROPERTY -->
   <div id="propView" class="hidden">
     <p><button class="link" id="back">&larr; Back to the list</button></p>
-    <div class="card"><div id="ptitle" style="font-size:18px;font-weight:800"></div><div class="muted" id="psub"></div></div>
+    <div class="card"><div id="ptitle" style="font-size:18px;font-weight:800"></div><div class="muted" id="psub"></div><div id="pprog" style="margin-top:8px"></div></div>
     <div class="steps" id="steps"></div>
     <div class="grid2">
       <div>
@@ -108,13 +110,14 @@
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 let csrf = "", me = null, page = 1, cur = null, picked = null, pickedUrl = null;
-const ROLE_LABEL = {notice:"Foreclosure notice", deed_of_trust:"Deed of Trust", loan_doc:"Loan document"};
-const OCR_PAGES = {notice:4, deed_of_trust:2, loan_doc:3};
+const ROLE_LABEL = {notice:"Foreclosure notice", deed_of_trust:"Deed of Trust", loan_doc:"Loan document", other_doc:"Additional document"};
+const OCR_PAGES = {notice:4, deed_of_trust:2, loan_doc:3, other_doc:2};
 const SUBTYPES = [["assignment","Assignment"],["note","Note"],["lien","Lien"],["release","Release"],["other","Other"]];
 const FIELDS = {
   notice:[["stamp_doc","Document # stamped on the notice","num"],["stamp_date","Recorded date (stamp)","date"],["deed_instrument","Deed of Trust document #","num"],["deed_recorded","Deed of Trust recorded on","date"],["deed_dated","Deed of Trust dated","date"],["borrower","Borrower","text"],["lender","Lender / beneficiary","text"],["principal","Original loan amount","text"],["sale_date","Sale date","date"]],
   deed_of_trust:[["stamp_doc","Document # stamped on the deed","num"],["stamp_date","Recorded date (stamp)","date"],["dated","Dated","date"],["borrower","Grantor(s) / Borrower(s)","text"],["lender","Lender (beneficiary)","text"],["trustee","DOT Lender Trustee","text"],["loan_number","Loan #","text"],["maturity_date","Loan end date (payoff date)","date"],["principal","Original loan amount","text"]],
-  loan_doc:[["stamp_doc","Document # stamped on the document","num"],["stamp_date","Recorded date (stamp)","date"],["assignor","Assignor / lienholder","text"],["assignee","Assignee","text"],["references","Deed of Trust # it refers to","num"],["principal","Amount","text"]]
+  loan_doc:[["stamp_doc","Document # stamped on the document","num"],["stamp_date","Recorded date (stamp)","date"],["assignor","Assignor / lienholder","text"],["assignee","Assignee","text"],["references","Deed of Trust # it refers to","num"],["principal","Amount","text"]],
+  other_doc:[["title","Title: what is this document? (required)","text"],["stamp_doc","Document # stamped on the document","num"],["stamp_date","Recorded date (stamp)","date"],["notes","Notes (internal, not shown to users)","text"]]
 };
 
 function toast(m){ const t=$("toast"); t.textContent=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2400); }
@@ -147,7 +150,8 @@ function enter(){
 }
 
 /* ---------- work list ---------- */
-function pill(state, label){ return '<span class="pill '+state+'" title="'+label+'">'+(state==="done"?"✓":state==="none_found"?"none":"–")+" "+label+"</span>"; }
+function pill(state, label){ const none = state==="none_found"; return '<span class="pill '+(none?"done":state)+'" title="'+label+'">'+((state==="done"||none)?"✓":"–")+" "+label+(none?" (none found)":"")+"</span>"; }
+function progBar(p){ return '<div class="prog"><div class="track"><div style="width:'+(p||0)+'%"></div></div>'+(p||0)+'%</div>'; }
 async function loadStats(){
   const s = await api("/intake/api/stats");
   $("stats").innerHTML = [["Notices",s.total],["Have notice PDF",s.with_notice],["Have deed of trust",s.with_deed],["Have loan doc / none",s.with_loan],["Complete",s.complete]]
@@ -163,11 +167,12 @@ async function loadList(){
   if($("fmonth").value) p.set("month",$("fmonth").value);
   const j = await api("/intake/api/worklist?"+p);
   const NEXT = {notice:"Upload notice", deed_of_trust:"Find deed of trust", loan_doc:"Find loan doc"};
-  $("rows").innerHTML = j.results.length ? '<table><thead><tr><th>Address</th><th>Sale month</th><th>Doc #</th><th>Documents</th><th>Next step</th><th></th></tr></thead><tbody>' +
+  $("rows").innerHTML = j.results.length ? '<table><thead><tr><th>Address</th><th>Sale month</th><th>Doc #</th><th>Documents</th><th>Progress</th><th>Next step</th><th></th></tr></thead><tbody>' +
     j.results.map(r=>'<tr><td><b>'+esc(r.address||"--")+'</b><div class="muted">'+esc(r.city||"")+' '+esc(r.zip||"")+'</div></td>'+
       '<td>'+esc(r.year)+'-'+String(r.month||"").padStart(2,"0")+'</td>'+
       '<td><a href="'+esc(r.notice_link)+'" target="_blank" rel="noopener">'+esc(r.doc_number)+'</a></td>'+
-      '<td>'+pill(r.notice_state,"Notice")+pill(r.deed_state,"Deed")+pill(r.loan_state,"Loan")+'</td>'+
+      '<td>'+pill(r.notice_state,"Notice")+pill(r.deed_state,"Deed")+pill(r.loan_state,"Loan")+(r.extras?' <span class="muted">+'+r.extras+' extra</span>':'')+'</td>'+
+      '<td>'+progBar(r.progress)+'</td>'+
       '<td>'+(r.next?esc(NEXT[r.next]):'<span class="pill done">Complete</span>')+'</td>'+
       '<td><button class="primary" data-id="'+r.id+'">'+(r.next?"Work on this":"Open")+'</button></td></tr>').join("") + '</tbody></table>'
     : '<div class="card muted">Nothing matches these filters.</div>';
@@ -178,8 +183,12 @@ async function loadList(){
 }
 
 /* ---------- one property ---------- */
-function stepsHtml(g){ return g.steps.map(s=>'<div class="step '+s.state+(g.current===s.role?" current":"")+'"><b>'+esc(s.label)+'</b>'+
-  (s.state==="done"?"✓ On file":s.state==="none_found"?"Marked not found":g.current===s.role?"← Do this now":"Waiting")+'</div>').join(""); }
+function stepsHtml(g){ return g.steps.map(s=>{
+  const loanNone = s.role==="loan_doc" && s.state==="none_found";
+  const cls = loanNone ? "done" : s.state;
+  const txt = s.state==="done" ? "✓ On file" : loanNone ? "✓ None found (complete)" : s.state==="none_found" ? "Marked not found - needs attention"
+            : s.state==="optional" ? (s.count ? s.count+" added" : "Optional - add any extra documents") : g.current===s.role ? "← Do this now" : "Waiting";
+  return '<div class="step '+cls+(g.current===s.role?" current":"")+'"><b>'+esc(s.label)+'</b>'+txt+'</div>'; }).join(""); }
 
 function guideHtml(g, prop){
   const L = g.lookup || {};
@@ -195,7 +204,7 @@ function guideHtml(g, prop){
     if(L.open_url) h += '<div style="margin-top:8px"><a class="btn primary" href="'+esc(L.open_url)+'" target="_blank" rel="noopener">Open the Clerk\'s site</a></div>';
     h += '</div>';
     if(g.current!=="notice") h += '<div class="field"><label>If you can\'t find it (add a note)</label><input id="nfNote" placeholder="e.g. searched by borrower name, nothing recorded"><div style="margin-top:6px"><button id="nfBtn">'+(g.current==="loan_doc"?"None found":"Not found")+'</button></div></div>';
-  } else h += '<div class="muted">This property has everything required. You can still add more loan documents below.</div>';
+  } else h += '<div class="muted">'+(g.complete ? 'This property has everything required (100%). Found other documents for it, such as liens, HOA or tax papers? Add each one under <b>Upload a document</b> &rarr; <b>Additional document</b>.' : 'See the steps above.')+'</div>';
   return h;
 }
 
@@ -206,10 +215,11 @@ function expectedFor(role, d){
 }
 
 function uploadHtml(d){
-  const cur_ = d.guidance.current || "loan_doc";
+  const cur_ = d.guidance.current || "other_doc";
   return '<h3>Upload a document</h3><div class="field"><label>Document type</label><select id="upRole">'+
     Object.keys(ROLE_LABEL).map(r=>'<option value="'+r+'"'+(r===cur_?" selected":"")+'>'+ROLE_LABEL[r]+'</option>').join("")+'</select></div>'+
     '<div class="field hidden" id="subWrap"><label>Loan document type</label><select id="upSub"><option value="">Choose…</option>'+SUBTYPES.map(s=>'<option value="'+s[0]+'">'+s[1]+'</option>').join("")+'</select></div>'+
+    '<div class="field hidden" id="nfBlock"><label id="nfLabel"></label><input id="nfNote2" placeholder="Note (optional): e.g. searched by borrower name, nothing recorded"><div style="margin-top:6px"><button id="nfBtn2"></button></div></div>'+
     '<div class="drop"><input type="file" id="upFile" accept="application/pdf,.pdf"><div style="margin-top:6px">PDF only, up to 25 MB. It is read on your computer; nothing is sent until you press Save.</div></div>'+
     '<div id="ocrBox" class="hidden"><div class="muted" id="ocrMsg"></div><div class="bar"><div id="ocrBar"></div></div></div>'+
     '<div id="fieldsBox"></div>';
@@ -236,7 +246,7 @@ function filesHtml(d){
   const fs = d.files.filter(f=>f.status!=="removed");
   if(!fs.length) return '<div class="muted">Nothing uploaded yet.</div>';
   return fs.map(f=>{
-    const lab = ROLE_LABEL[f.doc_role] + (f.doc_subtype?" ("+f.doc_subtype+")":"");
+    const lab = f.doc_role==="other_doc" ? ("Additional: " + ((f.fields&&f.fields.title)||"untitled")) : ROLE_LABEL[f.doc_role] + (f.doc_subtype?" ("+f.doc_subtype+")":"");
     const chk = f.stamp_matches===1?'<span class="badge ok">✓ number matches</span>':f.stamp_matches===0?'<span class="badge bad">number mismatch</span>':"";
     if(f.status==="none_found") return '<div class="file"><div><b>'+esc(lab)+'</b>: marked not found<div class="muted">'+esc(f.note||"")+' · '+esc(f.by)+'</div></div><button data-rm="'+f.id+'">Undo</button></div>';
     return '<div class="file"><div><b>'+esc(lab)+'</b> '+(f.doc_number?'#'+esc(f.doc_number):"")+' '+chk+'<div class="muted">'+esc(f.original_name)+' · '+esc(f.by)+' · '+esc((f.uploaded_at||"").slice(0,10))+'</div></div>'+
@@ -248,6 +258,8 @@ function renderProperty(d){
   cur = d; const p = d.property;
   $("ptitle").textContent = (p.address||"--") + ", " + (p.city||"") + " " + (p.zip||"");
   $("psub").innerHTML = 'Notice #<span class="copy">'+esc(p.doc_number)+'</span> · sale month '+esc(p.year)+'-'+String(p.month||"").padStart(2,"0");
+  const pr = d.guidance.progress;
+  $("pprog").innerHTML = '<div class="prog"><div class="track" style="width:220px"><div style="width:'+pr.percent+'%"></div></div><b>'+pr.percent+'% complete</b> <span class="muted">('+pr.done+' of '+pr.total+' required)'+(d.guidance.extras ? ' + '+d.guidance.extras+' additional' : '')+'</span></div>';
   $("steps").innerHTML = stepsHtml(d.guidance);
   $("guide").innerHTML = guideHtml(d.guidance, p);
   $("uploadCard").innerHTML = uploadHtml(d);
@@ -256,12 +268,20 @@ function renderProperty(d){
   $("guide").querySelectorAll("[data-copy]").forEach(b=>b.onclick=()=>copyText(b.dataset.copy));
   const nf = $("nfBtn"); if(nf) nf.onclick = async ()=>{
     try{ renderProperty(await api("/intake/api/property/"+p.id+"/none-found",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({doc_role:d.guidance.current,note:$("nfNote").value})})); toast("Saved"); }catch(e){ toast(e.message); } };
+  const nf2 = $("nfBtn2"); if(nf2) nf2.onclick = async ()=>{
+    try{ renderProperty(await api("/intake/api/property/"+p.id+"/none-found",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({doc_role:$("upRole").value,note:$("nfNote2").value})})); toast("Saved"); }catch(e){ toast(e.message); } };
   $("files").querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>window.open("/intake/api/file/"+b.dataset.view,"_blank"));
   $("files").querySelectorAll("[data-rm]").forEach(b=>b.onclick=async ()=>{ if(!confirm("Remove this? The PDF is kept for the audit trail but is no longer used.")) return;
     try{ renderProperty(await api("/intake/api/file/"+b.dataset.rm+"/remove",{method:"POST"})); toast("Removed"); }catch(e){ toast(e.message); } });
   $("upRole").onchange = syncRole; $("upFile").onchange = onFile; syncRole();
 }
-function syncRole(){ $("subWrap").classList.toggle("hidden", $("upRole").value!=="loan_doc"); }
+function syncRole(){
+  const role = $("upRole").value;
+  $("subWrap").classList.toggle("hidden", role!=="loan_doc");
+  $("nfBlock").classList.toggle("hidden", role!=="loan_doc" && role!=="deed_of_trust");
+  $("nfLabel").textContent = role==="loan_doc" ? "No loan document on record? Mark it as none found (this counts as complete)." : "Can't find the deed of trust? Mark it as not found.";
+  $("nfBtn2").textContent = role==="loan_doc" ? "None found - loan document" : "Not found - deed of trust";
+}
 function setPreview(file){
   if(pickedUrl){ URL.revokeObjectURL(pickedUrl); pickedUrl=null; }
   const f = $("preview");
@@ -319,7 +339,7 @@ async function onFile(){
       text = await readPdfText(f, OCR_PAGES[role], prog);
     }
     const P = IntakeParse;
-    vals = role==="notice" ? P.parseNotice(text) : role==="deed_of_trust" ? P.parseDeedOfTrust(text) : P.parseLoanDoc(text);
+    vals = role==="notice" ? P.parseNotice(text) : role==="deed_of_trust" ? P.parseDeedOfTrust(text) : role==="other_doc" ? P.parseOtherDoc(text) : P.parseLoanDoc(text);
     if(role==="loan_doc" && vals.subtype && !$("upSub").value) $("upSub").value = vals.subtype;
     $("ocrMsg").textContent = "Done reading. Please check the values below."; $("ocrBar").style.width="100%";
   }catch(e){ $("ocrMsg").textContent = "Couldn't read this PDF automatically (" + e.message + "). Type the values from the document instead."; }
@@ -333,6 +353,7 @@ async function save(){
   const role = $("upRole").value, fields = {};
   document.querySelectorAll("[data-f]").forEach(i=>{ if(i.value) fields[i.dataset.f] = i.value.trim(); });
   if(role==="loan_doc" && !$("upSub").value){ toast("Choose the loan document type"); return; }
+  if(role==="other_doc" && !(fields.title||"").trim()){ toast("Give this document a short title first"); return; }
   const fd = new FormData(); fd.append("file", picked); fd.append("doc_role", role); fd.append("doc_subtype", $("upSub").value); fd.append("fields", JSON.stringify(fields));
   $("saveBtn").disabled = true; $("saveBtn").textContent = "Saving…";
   try{
