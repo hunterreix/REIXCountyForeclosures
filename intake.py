@@ -42,7 +42,9 @@ intake_bp = Blueprint("intake", __name__)
 DOCS_DIR = os.environ.get("REIX_DOCS_DIR", os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "docs"))
 MAX_PDF_BYTES = 25 * 1024 * 1024
 ROLES = ("notice", "deed_of_trust", "loan_doc")
-ROLE_LABELS = {"notice": "Foreclosure notice", "deed_of_trust": "Deed of Trust", "loan_doc": "Loan document"}
+ROLE_LABELS = {"notice": "Foreclosure notice", "deed_of_trust": "Deed of Trust", "loan_doc": "Loan document",
+               "other_doc": "Additional document"}
+EXTRA_ROLE = "other_doc"   # optional extra documents: any number, never required for completion
 SUBTYPES = ("assignment", "note", "lien", "release", "other")
 
 CLERK_HOME = "https://bexar.tx.publicsearch.us/"
@@ -59,6 +61,7 @@ FIELD_RULES = {
                       "principal": "text"},   # trustee = "DOT Lender Trustee"; maturity_date = loan end / payoff date
     "loan_doc": {"stamp_doc": "num", "stamp_date": "date", "assignor": "text", "assignee": "text",
                  "references": "num", "principal": "text"},
+    "other_doc": {"stamp_doc": "num", "stamp_date": "date", "title": "text", "notes": "text"},
 }
 
 SCHEMA = """
@@ -351,7 +354,13 @@ def build_guidance(prop, files):
     """Which document is next, and exactly what to look for."""
     states = {r: _role_state(files, r) for r in ROLES}
     current = next((r for r in ROLES if states[r] == "missing"), None)
-    g = {"steps": [{"role": r, "label": ROLE_LABELS[r], "state": states[r]} for r in ROLES], "current": current}
+    extras = [f for f in files if f["doc_role"] == EXTRA_ROLE and f["status"] == "uploaded"]
+    steps = [{"role": r, "label": ROLE_LABELS[r], "state": states[r]} for r in ROLES]
+    steps.append({"role": EXTRA_ROLE, "label": "Additional documents", "state": "optional", "count": len(extras)})
+    resolved = sum([states["notice"] == "done", states["deed_of_trust"] == "done",
+                    states["loan_doc"] in ("done", "none_found")])   # a loan document marked "none found" counts as complete
+    g = {"steps": steps, "current": current, "extras": len(extras), "complete": _complete(files),
+         "progress": {"done": resolved, "total": len(ROLES), "percent": round(100 * resolved / len(ROLES))}}
     nf = _latest_fields(files, "notice")
     df = _latest_fields(files, "deed_of_trust")
     if current == "notice":
@@ -379,8 +388,14 @@ def build_guidance(prop, files):
                  instructions=["In Land Records, search the borrower's name and look for an ASSIGNMENT OF DEED OF TRUST, "
                                "a lien or a release recorded after the deed of trust date.",
                                "Upload each one you find (choose the type). If there is none, use 'None found'."])
+    elif g["complete"]:
+        g.update(title="All required documents are in", lookup={},
+                 instructions=["Everything required is on file. If you find other documents for this property "
+                               "(liens, HOA or tax papers, title work...), add them as an 'Additional document'."])
     else:
-        g.update(title="All required documents are in", lookup={}, instructions=[])
+        g.update(title="The deed of trust was marked not found", lookup={},
+                 instructions=["The notice and deed of trust are needed to complete a property. Re-check the Clerk's site, "
+                               "and upload the deed of trust when you find it."])
     return g
 
 
@@ -434,7 +449,9 @@ def worklist():
         (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='notice' AND f.status='uploaded') AS n_notice,
         (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='deed_of_trust' AND f.status='uploaded') AS n_deed,
         (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='loan_doc' AND f.status IN ('uploaded','none_found')) AS n_loan,
-        (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='deed_of_trust' AND f.status='none_found') AS deed_none
+        (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='deed_of_trust' AND f.status='none_found') AS deed_none,
+        (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='loan_doc' AND f.status='none_found') AS loan_none,
+        (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='other_doc' AND f.status='uploaded') AS n_extra
         FROM properties p WHERE {' AND '.join(where)}"""
     try:
         page = max(1, int(a.get("page", 1)))
@@ -451,7 +468,9 @@ def worklist():
         d = dict(r)
         d["notice_state"] = "done" if d["n_notice"] else "missing"
         d["deed_state"] = "done" if d["n_deed"] else "missing"
-        d["loan_state"] = "done" if d["n_loan"] else "missing"
+        d["loan_state"] = ("none_found" if d["loan_none"] else "done") if d["n_loan"] else "missing"
+        d["extras"] = d["n_extra"]
+        d["progress"] = round(100 * (bool(d["n_notice"]) + bool(d["n_deed"]) + bool(d["n_loan"])) / 3)
         d["next"] = ("notice" if not d["n_notice"] else "deed_of_trust" if not d["n_deed"] else "loan_doc" if not d["n_loan"] else None)
         d["notice_link"] = BEXAR_NOTICE_LINK.format(doc=d["doc_number"])
         out.append(d)
@@ -503,7 +522,7 @@ def _clean_fields(role, raw):
 @require_intake
 def upload(pid):
     role = request.form.get("doc_role", "")
-    if role not in ROLES:
+    if role not in ROLES + (EXTRA_ROLE,):
         return jsonify({"error": "unknown document type"}), 400
     subtype = request.form.get("doc_subtype", "") if role == "loan_doc" else ""
     if role == "loan_doc" and subtype not in SUBTYPES:
@@ -521,6 +540,8 @@ def upload(pid):
     except ValueError:
         raw_fields = {}
     fields = _clean_fields(role, raw_fields)
+    if role == EXTRA_ROLE and not fields.get("title"):
+        return jsonify({"error": "give the additional document a short title (for example 'HOA lien')"}), 400
 
     conn = get_conn()
     prop = _property(conn, pid)
@@ -646,6 +667,7 @@ FACT_KEYS = {
     "deed_of_trust": ("stamp_doc", "stamp_date", "dated", "borrower", "lender", "trustee",
                       "loan_number", "maturity_date", "principal"),
     "loan_doc": ("stamp_doc", "stamp_date", "assignor", "assignee", "references", "principal"),
+    "other_doc": ("stamp_doc", "stamp_date", "title"),
 }
 
 
@@ -665,7 +687,7 @@ def attach_viewer_docs(conn, items):
     for i in items:
         if i["id"] not in ids:
             continue
-        facts = {"notice": {}, "deed_of_trust": {}, "loan_docs": [], "loan_doc_none_found": False}
+        facts = {"notice": {}, "deed_of_trust": {}, "loan_docs": [], "other_docs": [], "loan_doc_none_found": False}
         for f in files_by.get(i["id"], []):
             if f["status"] == "none_found":
                 facts["loan_doc_none_found"] = facts["loan_doc_none_found"] or f["doc_role"] == "loan_doc"
@@ -674,11 +696,14 @@ def attach_viewer_docs(conn, items):
                 continue
             i["doc_files"].append({"id": f["id"], "role": f["doc_role"], "label": ROLE_LABELS[f["doc_role"]],
                                    "subtype": f["doc_subtype"] or None, "uploaded_at": f["uploaded_at"],
+                                   "title": f["fields"].get("title") or None,
                                    "url": f"/api/public/files/{f['id']}"})
             picked = {k: v for k, v in f["fields"].items() if k in FACT_KEYS[f["doc_role"]]}
             if f["doc_role"] == "loan_doc":
                 picked["type"] = f["doc_subtype"] or ""
                 facts["loan_docs"].append(picked)
+            elif f["doc_role"] == EXTRA_ROLE:
+                facts["other_docs"].append(picked)
             else:
                 facts[f["doc_role"]] = picked
         i["doc_facts"] = facts
