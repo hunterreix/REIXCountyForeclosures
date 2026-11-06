@@ -220,6 +220,7 @@ async function gateLogin(){
   csrfToken = j.csrf; document.getElementById("gPass").value = ""; startApp(j.user);
 }
 async function signOut(){
+  try{ const m = await (await _fetch("/auth/me")).json(); if(m.csrf) csrfToken = m.csrf; }catch(e){}   // make sure the token is current
   await _fetch("/auth/logout", {method:"POST", headers:{"X-CSRF-Token": csrfToken}});
   location.reload();
 }
