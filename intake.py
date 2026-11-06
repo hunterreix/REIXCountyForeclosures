@@ -242,10 +242,13 @@ def login():
         _FAILS[key] = [count + 1, first]
         return jsonify({"error": "wrong email or password"}), 401
     _FAILS.pop(key, None)
+    # Signing in again as the same person (for example in a second tab) keeps the same security token,
+    # so other open tabs don't suddenly fail with "bad CSRF token".
+    keep = session.get("csrf") if session.get("uid") == u["id"] else None
     session.clear()
     session.permanent = True
     session["uid"] = u["id"]
-    session["csrf"] = secrets.token_hex(16)
+    session["csrf"] = keep or secrets.token_hex(16)
     _log(u["id"], None, "login")
     return jsonify({"user": {"email": u["email"], "name": u["name"], "role": u["role"]}, "csrf": session["csrf"]})
 
