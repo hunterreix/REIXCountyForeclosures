@@ -94,6 +94,7 @@
   .gate .err{color:#c0392b;font-size:13px;margin-top:8px;min-height:18px;}
   .docs-btn{background:#fff;border:1px solid var(--accent);color:var(--accent);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;}
   .docs-btn:hover{background:#eef4f2;}
+  .leaflet-popup-content .pop-docs{margin-top:8px;padding-top:8px;border-top:1px solid #e4e7eb;font-size:12px;} .pop-docs b{display:block;margin-bottom:2px;} .leaflet-popup-content .pop-docs a{display:block;color:var(--accent);font-weight:600;text-decoration:none;margin:3px 0;} .leaflet-popup-content .pop-docs a:hover{text-decoration:underline;} .pop-docs .docs-btn{margin-top:6px;}
   .modal{position:fixed;inset:0;background:rgba(15,20,25,.5);display:none;align-items:center;justify-content:center;z-index:150;padding:16px;}
   .modal .sheet{background:#fff;border-radius:14px;width:min(680px,100%);max-height:88vh;overflow:auto;padding:20px;}
   .modal h3{margin:0 0 2px;font-size:17px;} .modal .sub{color:var(--sub);font-size:13px;margin-bottom:6px;}
@@ -274,6 +275,13 @@ function qs(params){
 const DOC_ROWS = {};
 function docsCell(r){
   return (r.doc_files && r.doc_files.length) ? '<button class="docs-btn" data-docs="' + r.id + '">Documents</button>' : "";
+}
+// the documents as plain links, for the map popup (each opens its PDF; Details opens the full viewer)
+function docLinks(r){
+  if(!(r.doc_files && r.doc_files.length)) return "";
+  return '<div class="pop-docs"><b>Documents</b>' + r.doc_files.map(d =>
+    '<a href="' + escapeAttr(d.url) + '" target="_blank" rel="noopener">' + escapeAttr(d.title || d.label) + (d.subtype ? " (" + escapeAttr(d.subtype) + ")" : "") + "</a>").join("") +
+    '<button class="docs-btn" data-docs="' + r.id + '">Details</button></div>';
 }
 const FACT_LABELS = {
   stamp_doc:"Document #", stamp_date:"Recorded", sale_date:"Sale date", deed_instrument:"Deed of Trust #",
@@ -494,7 +502,7 @@ async function loadMap(){
       const addr = r.full_address || r.address || "";
       const color = r.type === 'tax' ? '#b3541e' : '#0f6e5c';
       const marker = L.circleMarker([r.lat, r.lon], {radius:6, color, fillColor:color, fillOpacity:0.8});
-      marker.bindPopup(`<b>${r.address||'--'}</b><br>${r.city||''} ${r.zip||''} &middot; ${r.county||''} County<br>Doc #${r.doc_number}<br><a href="${reixUrlFor(addr)}" target="_blank" rel="noopener" class="view-btn" data-address="${escapeAttr(addr)}">View on REIX</a> ${docsCell(r)}`);
+      marker.bindPopup(`<b>${r.address||'--'}</b><br>${r.city||''} ${r.zip||''} &middot; ${r.county||''} County<br>Doc #${r.doc_number}<br><a href="${reixUrlFor(addr)}" target="_blank" rel="noopener" class="view-btn" data-address="${escapeAttr(addr)}">View on REIX</a>${docLinks(r)}`);
       marker.addTo(markersLayer);
       pts.push([r.lat, r.lon]);
     }
