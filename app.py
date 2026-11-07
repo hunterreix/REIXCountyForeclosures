@@ -99,6 +99,12 @@ def row_to_dict(row):
     if d.get("county") == "Bexar" and d.get("type") == "mortgage" and d.get("doc_number"):
         # computed at read time so it also fixes older rows stored with the old link
         d["doc_link"] = BEXAR_NOTICE_LINK.format(doc=d["doc_number"])
+    # Monthly list: the real sale month once the notice is processed, otherwise the county's filing cycle
+    d["cycle"] = f"{d['year']:04d}-{d['month']:02d}" if d.get("year") and d.get("month") else None
+    if d.get("sale_date"):
+        d["list_month"], d["list_basis"] = d["sale_date"][:7], "sale_date"
+    else:
+        d["list_month"], d["list_basis"] = d["cycle"], "county_cycle"
     return d
 
 
@@ -158,6 +164,16 @@ def build_filters(args):
     if month.isdigit():
         clauses.append("month = ?")
         params.append(int(month))
+
+    list_month = args.get("list_month", "").strip()          # a monthly list, e.g. 2026-11
+    if len(list_month) == 7 and list_month[4] == "-" and (list_month[:4] + list_month[5:]).isdigit():
+        clauses.append("COALESCE(substr(sale_date, 1, 7), printf('%04d-%02d', year, month)) = ?")
+        params.append(list_month)
+    basis = args.get("basis", "").strip().lower()            # confirmed = real sale date known; provisional = filing cycle only
+    if basis == "confirmed":
+        clauses.append("sale_date IS NOT NULL")
+    elif basis == "provisional":
+        clauses.append("sale_date IS NULL")
 
     doc_number = args.get("doc_number", "").strip()
     if doc_number:
@@ -259,7 +275,8 @@ def query_properties(args):
 
     rows = conn.execute(
         f"""SELECT id, county, source_layer AS type, doc_number, address, city, zip,
-                   school_dist, year, month, lat, lon, doc_link, first_seen, last_seen
+                   school_dist, year, month, lat, lon, doc_link, first_seen, last_seen,
+                   sale_date, sale_date_source
             FROM properties {where}
             ORDER BY year DESC, month DESC, id DESC
             LIMIT ? OFFSET ?""",
@@ -290,9 +307,10 @@ def summary_stats():
         "SELECT city, COUNT(*) AS c FROM properties WHERE city != '' GROUP BY city ORDER BY c DESC LIMIT 10"
     ).fetchall()
     by_month = conn.execute(
-        """SELECT year, month, COUNT(*) AS c FROM properties
-           WHERE year IS NOT NULL AND month IS NOT NULL
-           GROUP BY year, month ORDER BY year DESC, month DESC LIMIT 12"""
+        """SELECT CAST(substr(m, 1, 4) AS INTEGER) AS year, CAST(substr(m, 6, 2) AS INTEGER) AS month, COUNT(*) AS c
+           FROM (SELECT COALESCE(substr(sale_date, 1, 7), printf('%04d-%02d', year, month)) AS m FROM properties
+                 WHERE sale_date IS NOT NULL OR (year IS NOT NULL AND month IS NOT NULL))
+           GROUP BY m ORDER BY m DESC LIMIT 12"""
     ).fetchall()
     last_run = conn.execute(
         """SELECT run_at, layer AS county, fetched, inserted, updated, status, message
@@ -323,8 +341,10 @@ def meta_options():
     counties = [r["county"] for r in conn.execute(
         "SELECT DISTINCT county FROM properties ORDER BY county"
     ).fetchall()]
+    months = [{"month": m["month"], "label": m["label"], "total": m["total"], "basis": m["basis"]}
+              for m in list_summaries(conn)]
     conn.close()
-    return {"types": ["mortgage", "tax"], "cities": cities, "counties": counties}
+    return {"types": ["mortgage", "tax"], "cities": cities, "counties": counties, "months": months}
 
 
 # --------------------------------------------------------------------------
@@ -419,7 +439,8 @@ def v1_property_detail(property_id):
     conn = get_conn()
     row = conn.execute(
         """SELECT id, county, source_layer AS type, doc_number, address, city, zip,
-                  school_dist, year, month, lat, lon, doc_link, first_seen, last_seen
+                  school_dist, year, month, lat, lon, doc_link, first_seen, last_seen,
+                  sale_date, sale_date_source
            FROM properties WHERE id = ?""",
         (property_id,),
     ).fetchone()
@@ -594,6 +615,11 @@ def internal_deeds_post():
     conn.commit()
     conn.close()
     return jsonify({"status": "ok", "deeds_saved": saved, "skipped": skipped})
+
+
+# Monthly lists (/api/v1/lists) - see lists.py
+from lists import register as register_lists, summaries as list_summaries  # noqa: E402
+register_lists(app, query_properties, require_api_key, get_conn)
 
 
 @app.route("/health")
