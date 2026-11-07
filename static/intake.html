@@ -171,9 +171,9 @@ async function loadList(){
   if($("fmonth").value) p.set("month",$("fmonth").value);
   const j = await api("/intake/api/worklist?"+p);
   const NEXT = {notice:"Upload notice", deed_of_trust:"Find deed of trust", loan_doc:"Find loan doc"};
-  $("rows").innerHTML = j.results.length ? '<table><thead><tr><th>Address</th><th>Sale month</th><th>Doc #</th><th>Documents</th><th>Progress</th><th>Next step</th><th></th></tr></thead><tbody>' +
+  $("rows").innerHTML = j.results.length ? '<table><thead><tr><th>Address</th><th>Sale</th><th>Doc #</th><th>Documents</th><th>Progress</th><th>Next step</th><th></th></tr></thead><tbody>' +
     j.results.map(r=>'<tr><td><b>'+esc(r.address||"--")+'</b><div class="muted">'+esc(r.city||"")+' '+esc(r.zip||"")+'</div></td>'+
-      '<td>'+esc(r.year)+'-'+String(r.month||"").padStart(2,"0")+'</td>'+
+      '<td>'+(r.sale_date ? esc(r.sale_date) : '<span class="muted" title="Estimated from the county filing cycle; confirmed when the notice is processed">~ '+esc(r.list_month||"")+'</span>')+'</td>'+
       '<td><a href="'+esc(r.notice_link)+'" target="_blank" rel="noopener">'+esc(r.doc_number)+'</a></td>'+
       '<td>'+pill(r.notice_state,"Notice")+pill(r.deed_state,"Deed")+pill(r.loan_state,"Loan")+(r.extras?' <span class="muted">+'+r.extras+' extra</span>':'')+'</td>'+
       '<td>'+progBar(r.progress)+'</td>'+
@@ -261,7 +261,7 @@ function filesHtml(d){
 function renderProperty(d){
   cur = d; const p = d.property;
   $("ptitle").textContent = (p.address||"--") + ", " + (p.city||"") + " " + (p.zip||"");
-  $("psub").innerHTML = 'Notice #<span class="copy">'+esc(p.doc_number)+'</span> · sale month '+esc(p.year)+'-'+String(p.month||"").padStart(2,"0");
+  $("psub").innerHTML = 'Notice #<span class="copy">'+esc(p.doc_number)+'</span> · '+(p.sale_date ? 'sale date '+esc(p.sale_date) : 'sale month ~'+esc(p.year)+'-'+String(p.month||"").padStart(2,"0")+' (estimated; confirmed when the notice is saved)');
   const pr = d.guidance.progress;
   $("pprog").innerHTML = '<div class="prog"><div class="track" style="width:220px"><div style="width:'+pr.percent+'%"></div></div><b>'+pr.percent+'% complete</b> <span class="muted">('+pr.done+' of '+pr.total+' required)'+(d.guidance.extras ? ' + '+d.guidance.extras+' additional' : '')+'</span></div>';
   $("steps").innerHTML = stepsHtml(d.guidance);
