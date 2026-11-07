@@ -590,8 +590,10 @@ document.getElementById("searchBtn").addEventListener("click", ()=>{
   state.county = document.getElementById("county").value;
   state.docs = document.getElementById("docsOnly").checked ? "complete" : "";
   loadList();
+  if(document.getElementById("view-map").style.display === "block") loadMap();   // keep the map in step with the filters
 });
 document.getElementById("q").addEventListener("keydown", e=>{ if(e.key==="Enter") document.getElementById("searchBtn").click(); });
+document.getElementById("docsOnly").addEventListener("change", ()=>document.getElementById("searchBtn").click());   // apply as soon as it's ticked
 document.getElementById("prevBtn").addEventListener("click", ()=>{ if(state.page>1){ state.page--; loadList(); }});
 document.getElementById("nextBtn").addEventListener("click", ()=>{ state.page++; loadList(); });
 
