@@ -128,3 +128,51 @@ def init_db():
 if __name__ == "__main__":
     init_db()
     print(f"Initialized DB at {DB_PATH}")
+
+
+# Counties we used to serve and no longer do. At startup their rows (and everything tied to them) are
+# copied to a JSON file next to the database and then deleted. Idempotent: once they are gone this does nothing.
+# A property that has staff-uploaded documents is NEVER deleted.
+REMOVED_COUNTIES = ("Collin",)
+
+
+def purge_removed_counties():
+    import datetime as dt
+    import json
+    try:
+        conn = get_conn()
+        tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        for county in REMOVED_COUNTIES:
+            props = [dict(r) for r in conn.execute("SELECT * FROM properties WHERE county = ?", (county,)).fetchall()]
+            if not props:
+                conn.execute("DELETE FROM scrape_log WHERE layer = ?", (county,))   # leftover sync history
+                conn.commit()
+                continue
+            chunks = lambda ids: [ids[i:i + 500] for i in range(0, len(ids), 500)]
+            keep = set()                                    # properties that have staff-uploaded documents are never deleted
+            if "property_files" in tables:
+                for c in chunks([p["id"] for p in props]):
+                    keep |= {r["property_id"] for r in conn.execute(
+                        f"SELECT DISTINCT property_id FROM property_files WHERE property_id IN ({','.join('?' * len(c))})", c).fetchall()}
+            if keep:
+                print(f"[cleanup] keeping {len(keep)} {county} propert{'y that has' if len(keep) == 1 else 'ies that have'} uploaded documents")
+            doomed = [p for p in props if p["id"] not in keep]
+            if not doomed:
+                continue
+            folder = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "removed")
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, f"{county.lower()}-{dt.date.today().isoformat()}.json"), "w") as f:
+                json.dump(doomed, f, indent=1, default=str)      # a copy of what is being removed
+            for c in chunks([p["id"] for p in doomed]):
+                marks = ",".join("?" * len(c))
+                for t in ("property_documents", "doc_resolution", "property_deeds", "property_events"):
+                    if t in tables:
+                        conn.execute(f"DELETE FROM {t} WHERE property_id IN ({marks})", c)
+                conn.execute(f"DELETE FROM properties WHERE id IN ({marks})", c)
+            if not keep:
+                conn.execute("DELETE FROM scrape_log WHERE layer = ?", (county,))
+            conn.commit()
+            print(f"[cleanup] removed {len(doomed)} {county} propert{'y' if len(doomed) == 1 else 'ies'} (a copy was saved in {folder})")
+        conn.close()
+    except Exception as e:       # never let cleanup stop the app from starting
+        print(f"[cleanup] skipped: {e}")
