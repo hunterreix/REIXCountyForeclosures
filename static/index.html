@@ -142,6 +142,7 @@
       <option value="tax">Tax</option>
     </select>
     <select id="city"><option value="">All cities</option></select>
+    <select id="month"><option value="">All months</option></select>
     <label class="chk"><input type="checkbox" id="docsOnly"> Has documents</label>
     <button class="search-btn" id="searchBtn">Search</button>
   </div>
@@ -233,9 +234,15 @@ function startApp(user){
   if(started) return; started = true;
   loadMeta(); loadList();
 }
-let state = { page: 1, per_page: 25, q: "", type: "", city: "", county: "", docs: "" };
+let state = { page: 1, per_page: 25, q: "", type: "", city: "", county: "", docs: "", month: "" };
 let map, markersLayer;
 
+// the sale date once the notice is processed; until then the month is an estimate (~) from the county's filing cycle
+function saleCell(r){
+  if(r.sale_date) return escapeAttr(fmtDeedDate(r.sale_date));
+  const p = (r.list_month || "").split("-");
+  return '<span title="Estimated from the county filing cycle. The exact sale date is confirmed once the notice is processed.">~ ' + escapeAttr(fmtMonth(+p[0], +p[1])) + "</span>";
+}
 function fmtMonth(y,m){
   if(!y || !m) return "--";
   const d = new Date(y, m-1, 1);
@@ -396,6 +403,12 @@ async function loadMeta(){
     opt.value = c; opt.textContent = c + " County";
     countySel.appendChild(opt);
   });
+  const monthSel = document.getElementById("month");            // the monthly lists (by sale month)
+  (data.months || []).forEach(m=>{
+    const opt = document.createElement("option");
+    opt.value = m.month; opt.textContent = m.label + " (" + m.total + ")" + (m.basis === "confirmed" ? "" : " ~");
+    monthSel.appendChild(opt);
+  });
 }
 
 const DOC_LABELS = {deed_of_trust:"Deed of Trust", assignment:"Assignment", release:"Release", lien:"Lien"};
@@ -449,7 +462,7 @@ function renderRows(rows){
   let html = `<table><thead><tr>
     <th>County</th><th>Type</th><th>Address</th><th>City</th><th>ZIP</th>
     <th title="Will link to the recorded courthouse document">Doc #</th>
-    <th>Filed</th><th>Docs</th><th></th>
+    <th>Sale</th><th>Docs</th><th></th>
   </tr></thead><tbody>`;
   rows.forEach(r=>{
     DOC_ROWS[r.id] = r;
@@ -461,7 +474,7 @@ function renderRows(rows){
       <td>${r.city || "--"}</td>
       <td>${r.zip || "--"}</td>
       <td>${docCell(r)}</td>
-      <td>${fmtMonth(r.year, r.month)}</td>
+      <td>${saleCell(r)}</td>
       <td>${docsCell(r)}</td>
       <td><a class="view-btn" href="${reixUrlFor(addr)}" target="_blank" rel="noopener" data-address="${escapeAttr(addr)}">View on REIX</a></td>
     </tr>`;
@@ -473,7 +486,7 @@ function renderRows(rows){
 async function loadList(){
   const params = {
     page: state.page, per_page: state.per_page,
-    q: state.q, type: state.type, city: state.city, county: state.county, docs: state.docs
+    q: state.q, type: state.type, city: state.city, county: state.county, docs: state.docs, list_month: state.month
   };
   const res = await fetch(`/api/public/properties?${qs(params)}`);
   const data = await res.json();
@@ -492,7 +505,7 @@ async function loadMap(){
     markersLayer = L.layerGroup().addTo(map);
   }
   markersLayer.clearLayers();
-  const params = { page:1, per_page:100, q: state.q, type: state.type, city: state.city, county: state.county, docs: state.docs };
+  const params = { page:1, per_page:100, q: state.q, type: state.type, city: state.city, county: state.county, docs: state.docs, list_month: state.month };
   const res = await fetch(`/api/public/properties?${qs(params)}`);
   const data = await res.json();
   const pts = [];
@@ -589,11 +602,13 @@ document.getElementById("searchBtn").addEventListener("click", ()=>{
   state.city = document.getElementById("city").value;
   state.county = document.getElementById("county").value;
   state.docs = document.getElementById("docsOnly").checked ? "complete" : "";
+  state.month = document.getElementById("month").value;
   loadList();
   if(document.getElementById("view-map").style.display === "block") loadMap();   // keep the map in step with the filters
 });
 document.getElementById("q").addEventListener("keydown", e=>{ if(e.key==="Enter") document.getElementById("searchBtn").click(); });
-document.getElementById("docsOnly").addEventListener("change", ()=>document.getElementById("searchBtn").click());   // apply as soon as it's ticked
+document.getElementById("docsOnly").addEventListener("change", ()=>document.getElementById("searchBtn").click());
+document.getElementById("month").addEventListener("change", ()=>document.getElementById("searchBtn").click());   // pick a monthly list   // apply as soon as it's ticked
 document.getElementById("prevBtn").addEventListener("click", ()=>{ if(state.page>1){ state.page--; loadList(); }});
 document.getElementById("nextBtn").addEventListener("click", ()=>{ state.page++; loadList(); });
 
