@@ -1,4 +1,4 @@
-# REIX Bexar & Collin County Foreclosure Feed
+# REIX Bexar County Foreclosure Feed
 
 A small, self-contained system that turns Texas county foreclosure notices
 into (1) a free API and (2) a simple search/list/map web app — both
@@ -17,7 +17,6 @@ everywhere. Adding a new county later is additive:
 sources/
   base.py       - the CountySource interface every adapter implements
   bexar.py      - Bexar County (ArcGIS FeatureServer, JSON API)
-  collin.py     - Collin County (structured HTML, no JSON API found)
   registry.py   - the list of counties currently wired in
 ```
 
@@ -31,7 +30,7 @@ Most counties don't have one:
 | County | System | Verdict |
 |---|---|---|
 | **Bexar** | ArcGIS FeatureServer, clean JSON, no scraping | ✅ Built — easiest tier |
-| **Collin** | Dedicated county web app, filterable, server-rendered HTML | ✅ Built — structured but no JSON API |
+| Collin | County web app, server-rendered HTML | ⛔ Built once, then removed (Bexar only for now) |
 | Harris | No open feed; market served by paid data brokers (TaxNetUSA, etc.) | ❌ Skipped |
 | Dallas | Only general parcel/GIS data, nothing foreclosure-specific | ❌ Skipped |
 | Tarrant | Open data portal exists, no foreclosure layer | ❌ Skipped |
@@ -70,20 +69,6 @@ County sources (sources/*.py)  --->  scraper.py  --->  SQLite DB  --->  app.py (
     actual recorded document image**. I couldn't find a stable deep-link
     pattern, so `doc_link` currently points at a pre-filled search query
     as a placeholder (see `DOC_LINK_TEMPLATE` in `sources/bexar.py`).
-
-## Collin County data source detail
-
-`https://apps2.collincountytx.gov/ForeclosureNotices` — a county-built web
-app, not a documented API, but the base page is server-rendered so plain
-`requests` + BeautifulSoup can read it. Two things flagged in
-`sources/collin.py` for when you have a real browser handy:
-- Only page 1 is scraped right now (~25-50 most recent notices). The page
-  numbers render as an interactive grid, which usually means there's a
-  clean JSON endpoint underneath — open DevTools → Network on the live
-  site to find it, and swap it in for full pagination + more reliable parsing.
-- The real county document number lives on each notice's detail page, not
-  the list view, so `doc_number` for Collin is currently a synthetic ID
-  (address + dates hash) until a detail-page fetch step is added.
 
 ## Setup
 
@@ -135,8 +120,7 @@ for the API docs page.
 Deliberately plain, per your ask — no dashboard chrome, just:
 - **List** tab: search box (address/ZIP/doc #), county + type + city filters, paginated table
 - **Map** tab: Leaflet + free OpenStreetMap tiles, color-coded mortgage vs. tax pins,
-  auto-fits to whatever county/filter is active (note: Collin records don't have
-  coordinates yet, so they show in List/Summary but not the map until geocoding is added)
+  auto-fits to whatever filter is active
 - **Summary** tab: total counts, by-county and mortgage-vs-tax breakdowns, top cities, notices/month
 
 Every row has a **"View on REIX"** button and the header/footer both link to
