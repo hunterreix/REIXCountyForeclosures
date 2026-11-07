@@ -126,6 +126,12 @@ def _migrate(conn):
         conn.execute("ALTER TABLE intake_users ADD COLUMN role TEXT NOT NULL DEFAULT 'viewer'")
     if "scopes" not in cols("api_keys"):   # e.g. 'documents' lets a key download PDFs
         conn.execute("ALTER TABLE api_keys ADD COLUMN scopes TEXT NOT NULL DEFAULT ''")
+    if "sale_date" not in cols("properties"):   # the real sale date, read from the notice (YYYY-MM-DD)
+        for stmt in ("ALTER TABLE properties ADD COLUMN sale_date TEXT", "ALTER TABLE properties ADD COLUMN sale_date_source TEXT"):
+            try:
+                conn.execute(stmt)
+            except Exception:       # several server processes start at once: another one just added it
+                pass
 
 
 def _gate_public():
@@ -153,6 +159,7 @@ def init_intake(app):
     conn.executescript(SCHEMA)
     _migrate(conn)
     ensure_events(conn)
+    _backfill_sale_dates(conn)
     conn.commit()
     conn.close()
     app.before_request(_gate_public)
@@ -353,6 +360,37 @@ def _latest_fields(files, role):
     return {}
 
 
+def _sync_sale_date(conn, pid):
+    """Keep properties.sale_date equal to the sale date on the property's current (uploaded) notice.
+    A date more than 6 months away from the county's filing cycle is almost certainly a typo and is ignored.
+    When the date changes, publish a sale_date_set event that names the monthly list the notice is now in.
+    Returns True if something changed."""
+    row = conn.execute("SELECT year, month, sale_date FROM properties WHERE id = ?", (pid,)).fetchone()
+    if not row:
+        return False
+    new = _latest_fields(_file_rows(conn, [pid]).get(pid, []), "notice").get("sale_date") or None
+    if new and row["year"] and row["month"]:
+        if abs((int(new[:4]) * 12 + int(new[5:7])) - (row["year"] * 12 + row["month"])) > 6:
+            new = None
+    old = row["sale_date"]
+    if new == old:
+        return False
+    cur = conn.execute("UPDATE properties SET sale_date = ?, sale_date_source = ? "
+                       "WHERE id = ? AND COALESCE(sale_date, '') = COALESCE(?, '')", (new, "notice" if new else None, pid, old))
+    if cur.rowcount != 1:      # another worker already made this change
+        return False
+    cycle = f"{row['year']:04d}-{row['month']:02d}" if row["year"] and row["month"] else None
+    log_event(conn, pid, "sale_date_set", None, json.dumps({"sale_date": new, "list_month": new[:7] if new else cycle,
+                                                           "previous_list_month": old[:7] if old else cycle}))
+    return True
+
+
+def _backfill_sale_dates(conn):
+    """At startup: give every property that already has a processed notice its sale date."""
+    for r in conn.execute("SELECT DISTINCT property_id FROM property_files WHERE doc_role = 'notice' AND status = 'uploaded'").fetchall():
+        _sync_sale_date(conn, r["property_id"])
+
+
 def build_guidance(prop, files):
     """Which document is next, and exactly what to look for."""
     states = {r: _role_state(files, r) for r in ROLES}
@@ -437,10 +475,13 @@ def stats():
 def worklist():
     a = request.args
     where, params = ["p.county='Bexar'", "p.source_layer='mortgage'"], []
-    for key, col in (("year", "p.year"), ("month", "p.month")):
-        if str(a.get(key, "")).isdigit():
-            where.append(f"{col} = ?")
-            params.append(int(a[key]))
+    lm = "COALESCE(substr(p.sale_date, 1, 7), printf('%04d-%02d', p.year, p.month))"   # the monthly list
+    if str(a.get("year", "")).isdigit():
+        where.append(f"substr({lm}, 1, 4) = ?")
+        params.append(f"{int(a['year']):04d}")
+    if str(a.get("month", "")).isdigit():
+        where.append(f"substr({lm}, 6, 2) = ?")
+        params.append(f"{int(a['month']):02d}")
     q = (a.get("q") or "").strip()
     if q:
         where.append("(p.address LIKE ? OR p.doc_number LIKE ? OR p.zip LIKE ?)")
@@ -448,7 +489,7 @@ def worklist():
     cond = {"notice": "n_notice = 0", "deed_of_trust": "n_deed = 0", "loan_doc": "n_loan = 0",
             "complete": "n_notice > 0 AND n_deed > 0 AND n_loan > 0",
             "any": "NOT (n_notice > 0 AND n_deed > 0 AND n_loan > 0)"}.get(a.get("missing", "any"), "1=1")
-    inner = f"""SELECT p.id, p.doc_number, p.address, p.city, p.zip, p.year, p.month,
+    inner = f"""SELECT p.id, p.doc_number, p.address, p.city, p.zip, p.year, p.month, p.sale_date,
         (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='notice' AND f.status='uploaded') AS n_notice,
         (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='deed_of_trust' AND f.status='uploaded') AS n_deed,
         (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='loan_doc' AND f.status IN ('uploaded','none_found')) AS n_loan,
@@ -476,12 +517,13 @@ def worklist():
         d["progress"] = round(100 * (bool(d["n_notice"]) + bool(d["n_deed"]) + bool(d["n_loan"])) / 3)
         d["next"] = ("notice" if not d["n_notice"] else "deed_of_trust" if not d["n_deed"] else "loan_doc" if not d["n_loan"] else None)
         d["notice_link"] = BEXAR_NOTICE_LINK.format(doc=d["doc_number"])
+        d["list_month"] = d["sale_date"][:7] if d["sale_date"] else (f"{d['year']:04d}-{d['month']:02d}" if d["year"] and d["month"] else "")
         out.append(d)
     return jsonify({"results": out, "total": total, "page": page, "per_page": per})
 
 
 def _property(conn, pid):
-    return conn.execute("SELECT id, doc_number, address, city, zip, year, month FROM properties "
+    return conn.execute("SELECT id, doc_number, address, city, zip, year, month, sale_date FROM properties "
                         "WHERE id = ? AND county='Bexar' AND source_layer='mortgage'", (pid,)).fetchone()
 
 
@@ -594,6 +636,8 @@ def upload(pid):
         for rid in replaced:                       # a replaced document is reported as removed
             log_event(conn, pid, "document_removed", rid, role)
     log_event(conn, pid, "document_added", cur.lastrowid, role)
+    if role == "notice":
+        _sync_sale_date(conn, pid)
     conn.commit()
     d = _detail(conn, pid)
     conn.close()
@@ -638,6 +682,8 @@ def remove_file(fid):
     uid = request.intake_user["id"]
     conn.execute("UPDATE property_files SET status='removed', removed_by=?, removed_at=? WHERE id=?", (uid, _now(), fid))
     log_event(conn, row["property_id"], "document_removed", fid, row["doc_role"])
+    if row["doc_role"] == "notice":
+        _sync_sale_date(conn, row["property_id"])
     conn.commit()
     d = _detail(conn, row["property_id"])
     conn.close()
