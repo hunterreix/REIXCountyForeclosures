@@ -12,6 +12,7 @@ Event types: property_added, document_added, document_removed,
              document_none_found, deeds_updated
 """
 import datetime as dt
+import json
 
 _TABLE = """CREATE TABLE IF NOT EXISTS property_events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,16 +53,27 @@ def parse_key(key):
     return parts[0], parts[1], parts[2]
 
 
+def _detail(r):
+    """sale_date_set events say which monthly list the notice is now in (and which it came from)."""
+    if r["event_type"] != "sale_date_set":
+        return None
+    try:
+        return json.loads(r["detail"])
+    except ValueError:
+        return None
+
+
 def changes_after(conn, after, limit):
     ensure_schema(conn)
     rows = conn.execute(
-        """SELECT e.id, e.at, e.event_type, e.ref_id, p.county, p.source_layer, p.doc_number
+        """SELECT e.id, e.at, e.event_type, e.ref_id, e.detail, p.county, p.source_layer, p.doc_number
            FROM property_events e JOIN properties p ON p.id = e.property_id
            WHERE e.id > ? ORDER BY e.id LIMIT ?""", (after, limit + 1)).fetchall()
     more = len(rows) > limit
     events = [{"id": r["id"], "type": r["event_type"], "at": r["at"],
                "property_key": property_key(r["county"], r["source_layer"], r["doc_number"]),
-               "file_id": r["ref_id"] if r["event_type"].startswith("document_") else None}
+               "file_id": r["ref_id"] if r["event_type"].startswith("document_") else None,
+               "detail": _detail(r)}
               for r in rows[:limit]]
     latest = conn.execute("SELECT COALESCE(MAX(id), 0) m FROM property_events").fetchone()["m"]
     return events, more, latest
