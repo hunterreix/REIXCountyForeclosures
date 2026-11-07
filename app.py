@@ -39,6 +39,10 @@ from sync_api import sync_bp, attach_status  # noqa: E402
 from events import log_event  # noqa: E402
 app.register_blueprint(sync_bp)
 
+# Counties we no longer serve (Collin) are cleaned out once, at startup - see db.purge_removed_counties
+from db import purge_removed_counties  # noqa: E402
+purge_removed_counties()
+
 
 @app.after_request
 def add_cors_headers(resp):
