@@ -70,6 +70,8 @@ curl -b jar.txt -X POST https://YOUR-DOMAIN/api/v1/keys \
     <tr><td><span class="badge">GET</span>/api/v1/meta</td><td>Valid filter values (cities, types)</td></tr>
     <tr><td><span class="badge">GET</span>/api/v1/properties?property_key=bexar-mortgage-20261000380</td><td>One property by its stable key</td></tr>
     <tr><td><span class="badge">GET</span>/api/v1/changes?after=&lt;cursor&gt;</td><td>What changed since your last check (new notices, new or removed documents). Every property has a stable <code>property_key</code>; documents may arrive days after the property.</td></tr>
+    <tr><td><span class="badge">GET</span>/api/v1/lists</td><td>The monthly lists: every sale month with its counts (total, confirmed, provisional, documents complete)</td></tr>
+    <tr><td><span class="badge">GET</span>/api/v1/lists/&lt;YYYY-MM&gt;</td><td>One monthly list: all notices for that sale month, paged. Add <code>?format=csv</code> for the whole month as a CSV file. A notice has a <code>sale_date</code> once it is confirmed from the notice document; until then it is placed by the county filing cycle (<code>list_basis</code>: <code>county_cycle</code>) and may move to another month.</td></tr>
     <tr><td><span class="badge">POST</span>/api/v1/keys</td><td>Create an API key (signed-in account required)</td></tr>
   </table>
 
@@ -82,7 +84,9 @@ curl -b jar.txt -X POST https://YOUR-DOMAIN/api/v1/keys \
     <tr><td>city</td><td>string</td><td>Exact city name, see <code>/api/v1/meta</code></td></tr>
     <tr><td>zip</td><td>string</td><td>Exact ZIP code</td></tr>
     <tr><td>year</td><td>int</td><td>Filing year</td></tr>
-    <tr><td>month</td><td>int</td><td>Filing month (1-12)</td></tr>
+    <tr><td>month</td><td>int</td><td>Filing month (1-12): the county's filing cycle, not necessarily the sale month. Use <code>list_month</code> for the sale month.</td></tr>
+    <tr><td>list_month</td><td>string</td><td>A monthly list, <code>YYYY-MM</code> (the sale month when confirmed, otherwise the county's filing cycle)</td></tr>
+    <tr><td>basis</td><td>string</td><td><code>confirmed</code> (real sale date known) or <code>provisional</code> (filing cycle only)</td></tr>
     <tr><td>doc_number</td><td>string</td><td>Exact county document number</td></tr>
     <tr><td>page</td><td>int</td><td>Default 1</td></tr>
     <tr><td>per_page</td><td>int</td><td>Default 25, max 100</td></tr>
