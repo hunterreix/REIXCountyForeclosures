@@ -470,10 +470,8 @@ def stats():
                     "stored_mb": round(used / 1e6, 1), "disk": disk})
 
 
-@intake_bp.route("/intake/api/worklist")
-@require_intake
-def worklist():
-    a = request.args
+def _worklist_parts(a):
+    """The work-list filters as SQL: (inner select, params, condition for the missing-documents filter)."""
     where, params = ["p.county='Bexar'", "p.source_layer='mortgage'"], []
     lm = "COALESCE(substr(p.sale_date, 1, 7), printf('%04d-%02d', p.year, p.month))"   # the monthly list
     if str(a.get("year", "")).isdigit():
@@ -488,7 +486,8 @@ def worklist():
         params += [f"%{q}%"] * 3
     cond = {"notice": "n_notice = 0", "deed_of_trust": "n_deed = 0", "loan_doc": "n_loan = 0",
             "complete": "n_notice > 0 AND n_deed > 0 AND n_loan > 0",
-            "any": "NOT (n_notice > 0 AND n_deed > 0 AND n_loan > 0)"}.get(a.get("missing", "any"), "1=1")
+            "any": "NOT (n_notice > 0 AND n_deed > 0 AND n_loan > 0)",
+            "minimum": "(n_notice = 0 OR n_deed = 0)"}.get(a.get("missing", "any"), "1=1")
     inner = f"""SELECT p.id, p.doc_number, p.address, p.city, p.zip, p.year, p.month, p.sale_date,
         (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='notice' AND f.status='uploaded') AS n_notice,
         (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='deed_of_trust' AND f.status='uploaded') AS n_deed,
@@ -497,6 +496,14 @@ def worklist():
         (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='loan_doc' AND f.status='none_found') AS loan_none,
         (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='other_doc' AND f.status='uploaded') AS n_extra
         FROM properties p WHERE {' AND '.join(where)}"""
+    return inner, params, cond
+
+
+@intake_bp.route("/intake/api/worklist")
+@require_intake
+def worklist():
+    a = request.args
+    inner, params, cond = _worklist_parts(a)
     try:
         page = max(1, int(a.get("page", 1)))
     except ValueError:
@@ -781,3 +788,72 @@ def public_file(fid):
     resp.headers["Cache-Control"] = "private, no-store"
     resp.headers["X-Content-Type-Options"] = "nosniff"
     return resp
+
+
+# ------------------------------------------------------- next property, and editing a saved document's details
+@intake_bp.route("/intake/api/property/<int:pid>/next")
+@require_intake
+def next_property(pid):
+    """The next property after this one in the work list (same filters, same order). missing=minimum means
+    'still lacks the notice or the deed of trust'."""
+    inner, params, cond = _worklist_parts(request.args)
+    conn = get_conn()
+    cur = conn.execute("SELECT id, year, month FROM properties WHERE id = ?", (pid,)).fetchone()
+    if not cur:
+        conn.close()
+        return jsonify({"error": "not found"}), 404
+    y, m = cur["year"] or 0, cur["month"] or 0
+    row = conn.execute(
+        f"""SELECT id FROM ({inner}) WHERE ({cond}) AND
+              (COALESCE(year, 0) < ? OR (COALESCE(year, 0) = ? AND (COALESCE(month, 0) < ? OR (COALESCE(month, 0) = ? AND id < ?))))
+            ORDER BY COALESCE(year, 0) DESC, COALESCE(month, 0) DESC, id DESC LIMIT 1""",
+        params + [y, y, m, m, cur["id"]]).fetchone()
+    conn.close()
+    return jsonify({"next_id": row["id"] if row else None})
+
+
+def _recheck_stamps(conn, pid):
+    """After details change, re-compare the number stamped on the notice and deed with the number each should have."""
+    prop = _property(conn, pid)
+    files = _file_rows(conn, [pid]).get(pid, [])
+    expected = {"notice": prop["doc_number"], "deed_of_trust": _latest_fields(files, "notice").get("deed_instrument", "")}
+    for f in files:
+        if f["status"] != "uploaded" or f["doc_role"] not in expected:
+            continue
+        stamp, want = f["fields"].get("stamp_doc") or "", expected[f["doc_role"]]
+        conn.execute("UPDATE property_files SET stamp_matches = ? WHERE id = ?", (None if not (want and stamp) else int(stamp == want), f["id"]))
+
+
+@intake_bp.route("/intake/api/file/<int:fid>/fields", methods=["POST"])
+@require_intake
+def update_fields(fid):
+    """Edit the details read from a saved document. The PDF itself is untouched. Body:
+    {"fields": {...}, "doc_subtype": "assignment"}   (doc_subtype only for loan documents)"""
+    b = request.get_json(silent=True) or {}
+    conn = get_conn()
+    row = conn.execute("SELECT id, property_id, doc_role, doc_subtype FROM property_files WHERE id = ? AND status = 'uploaded'", (fid,)).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"error": "not found"}), 404
+    pid, role = row["property_id"], row["doc_role"]
+    fields = _clean_fields(role, b.get("fields"))
+    if role == EXTRA_ROLE and not fields.get("title"):
+        conn.close()
+        return jsonify({"error": "give the additional document a short title (for example 'HOA lien')"}), 400
+    subtype = row["doc_subtype"]
+    if role == "loan_doc":
+        subtype = str(b.get("doc_subtype", subtype) or "")
+        if subtype not in SUBTYPES:
+            conn.close()
+            return jsonify({"error": "choose the loan document type"}), 400
+    conn.execute("UPDATE property_files SET fields_json = ?, doc_subtype = ?, doc_number = ? WHERE id = ?",
+                 (json.dumps(fields), subtype, fields.get("stamp_doc", ""), fid))
+    _recheck_stamps(conn, pid)
+    if role == "notice":
+        _sync_sale_date(conn, pid)           # a corrected sale date can move the property to another monthly list
+    log_event(conn, pid, "document_updated", fid, role)
+    conn.commit()
+    d = _detail(conn, pid)
+    conn.close()
+    _log(request.intake_user["id"], pid, "edit_details", f"file {fid} ({role})")
+    return jsonify(d)
