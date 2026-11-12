@@ -74,7 +74,7 @@ def summaries(conn, county="", ltype="", only_month=None):
 
 CSV_COLUMNS = ["list_month", "list_basis", "sale_date", "property_key", "county", "type", "notice_number",
                "address", "city", "zip", "lat", "lon", "notice_link", "docs_notice", "docs_deed_of_trust",
-               "docs_complete", "docs_extra"]
+               "docs_complete", "docs_extra", "lien_position", "back_tax_amount_owed"]
 
 
 def register(app, query_properties, require_api_key, get_conn):
@@ -118,7 +118,7 @@ def register(app, query_properties, require_api_key, get_conn):
                     w.writerow([p["list_month"], p["list_basis"], p.get("sale_date") or "", p["property_key"], p["county"],
                                 p["type"], p["doc_number"], p["address"], p["city"], p["zip"], p.get("lat") or "",
                                 p.get("lon") or "", p.get("doc_link") or "", s.get("notice"), s.get("deed_of_trust"),
-                                p.get("docs_complete"), p.get("docs_extra", 0)])
+                                p.get("docs_complete"), p.get("docs_extra", 0), p.get("lien_position") or "", p.get("back_tax_amount_owed") or ""])
                 if page >= data["total_pages"] or page >= 100:
                     break
                 page += 1
