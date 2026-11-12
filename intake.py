@@ -7,8 +7,11 @@ in the USER'S BROWSER (OCR) -- nothing is sent to a third party -- and the
 extracted facts are shown for the person to confirm before saving. The tool then
 guides them to the next document in the chain:
 
-    1. notice  ->  2. deed_of_trust (named in the notice)  ->  3. loan_doc
-       (an assignment, note, lien or release tied to that deed of trust)
+    1. notice  ->  2. deed_of_trust (named in the notice)
+
+These two are the REQUIRED documents. Everything else (assignments, notes, liens, releases, HOA or tax
+papers, title work...) is an OPTIONAL "additional document": any number, never required, and reachable at
+any time, before or after the required ones are in.
 
 ACCOUNTS AND ROLES: everyone who uses the site signs in. Roles:
     viewer  - can use the foreclosure list, map and summary (and create an API key)
@@ -41,7 +44,7 @@ intake_bp = Blueprint("intake", __name__)
 
 DOCS_DIR = os.environ.get("REIX_DOCS_DIR", os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "docs"))
 MAX_PDF_BYTES = 25 * 1024 * 1024
-ROLES = ("notice", "deed_of_trust", "loan_doc")
+ROLES = ("notice", "deed_of_trust")   # the required documents
 ROLE_LABELS = {"notice": "Foreclosure notice", "deed_of_trust": "Deed of Trust", "loan_doc": "Loan document",
                "other_doc": "Additional document"}
 EXTRA_ROLE = "other_doc"   # optional extra documents: any number, never required for completion
@@ -59,9 +62,8 @@ FIELD_RULES = {
     "deed_of_trust": {"stamp_doc": "num", "stamp_date": "date", "dated": "date", "borrower": "text",
                       "lender": "text", "trustee": "text", "loan_number": "text", "maturity_date": "date",
                       "principal": "text"},   # trustee = "DOT Lender Trustee"; maturity_date = loan end / payoff date
-    "loan_doc": {"stamp_doc": "num", "stamp_date": "date", "assignor": "text", "assignee": "text",
-                 "references": "num", "principal": "text"},
-    "other_doc": {"stamp_doc": "num", "stamp_date": "date", "title": "text", "notes": "text"},
+    "other_doc": {"stamp_doc": "num", "stamp_date": "date", "title": "text", "assignor": "text", "assignee": "text",
+                  "references": "num", "principal": "text", "notes": "text"},
 }
 
 SCHEMA = """
@@ -160,6 +162,7 @@ def init_intake(app):
     _migrate(conn)
     ensure_events(conn)
     _backfill_sale_dates(conn)
+    _migrate_loan_docs(conn)
     conn.commit()
     conn.close()
     app.before_request(_gate_public)
@@ -391,6 +394,26 @@ def _backfill_sale_dates(conn):
         _sync_sale_date(conn, r["property_id"])
 
 
+def _migrate_loan_docs(conn):
+    """The loan document used to be a third required step. It is now just another additional document:
+    existing loan documents become additional documents (keeping their type and details, with a title),
+    and old 'none found' marks are retired. Idempotent: once converted, nothing is left to change."""
+    conn.execute("UPDATE property_files SET status = 'removed', removed_at = ? WHERE doc_role = 'loan_doc' AND status = 'none_found'", (_now(),))
+    for r in conn.execute("SELECT id, property_id, doc_subtype, fields_json FROM property_files "
+                          "WHERE doc_role = 'loan_doc' AND status = 'uploaded'").fetchall():
+        try:
+            f = json.loads(r["fields_json"] or "{}")
+        except ValueError:
+            f = {}
+        f = _clean_fields("other_doc", f)
+        if not f.get("title"):
+            f["title"] = "Loan document" + (f" ({r['doc_subtype']})" if r["doc_subtype"] else "")
+        cur = conn.execute("UPDATE property_files SET doc_role = 'other_doc', fields_json = ? WHERE id = ? AND doc_role = 'loan_doc'",
+                           (json.dumps(f), r["id"]))
+        if cur.rowcount == 1:      # (another server process may have just done it)
+            log_event(conn, r["property_id"], "document_updated", r["id"], "other_doc")
+
+
 def build_guidance(prop, files):
     """Which document is next, and exactly what to look for."""
     states = {r: _role_state(files, r) for r in ROLES}
@@ -398,8 +421,7 @@ def build_guidance(prop, files):
     extras = [f for f in files if f["doc_role"] == EXTRA_ROLE and f["status"] == "uploaded"]
     steps = [{"role": r, "label": ROLE_LABELS[r], "state": states[r]} for r in ROLES]
     steps.append({"role": EXTRA_ROLE, "label": "Additional documents", "state": "optional", "count": len(extras)})
-    resolved = sum([states["notice"] == "done", states["deed_of_trust"] == "done",
-                    states["loan_doc"] in ("done", "none_found")])   # a loan document marked "none found" counts as complete
+    resolved = sum([states["notice"] == "done", states["deed_of_trust"] == "done"])
     g = {"steps": steps, "current": current, "extras": len(extras), "complete": _complete(files),
          "progress": {"done": resolved, "total": len(ROLES), "percent": round(100 * resolved / len(ROLES))}}
     nf = _latest_fields(files, "notice")
@@ -420,19 +442,10 @@ def build_guidance(prop, files):
                                               "'Type of Sale') and type the number into the notice's fields, or search by the borrower's name."]) +
                               ["Confirm the result is a DEED OF TRUST recorded on the date shown, then download it and upload it here.",
                                "If it cannot be found, use 'Not found' and add a note."])
-    elif current == "loan_doc":
-        g.update(title="Find the loan document (assignment, note, lien or release)",
-                 lookup={"doc_number": df.get("stamp_doc", "") or nf.get("deed_instrument", ""), "department": "Land Records",
-                         "borrower": df.get("borrower", "") or nf.get("borrower", ""),
-                         "lender": df.get("lender", "") or nf.get("lender", ""),
-                         "loan_number": df.get("loan_number", ""), "open_url": CLERK_HOME},
-                 instructions=["In Land Records, search the borrower's name and look for an ASSIGNMENT OF DEED OF TRUST, "
-                               "a lien or a release recorded after the deed of trust date.",
-                               "Upload each one you find (choose the type). If there is none, use 'None found'."])
     elif g["complete"]:
         g.update(title="All required documents are in", lookup={},
-                 instructions=["Everything required is on file. If you find other documents for this property "
-                               "(liens, HOA or tax papers, title work...), add them as an 'Additional document'."])
+                 instructions=["Everything required (the notice and the deed of trust) is on file. Add any other documents you find "
+                               "(assignments, notes, liens, releases, HOA or tax papers, title work...) as an 'Additional document'."])
     else:
         g.update(title="The deed of trust was marked not found", lookup={},
                  instructions=["The notice and deed of trust are needed to complete a property. Re-check the Clerk's site, "
@@ -451,12 +464,11 @@ def stats():
         q = ",".join("'%s'" % s for s in statuses)
         return conn.execute(f"SELECT COUNT(*) c {base} AND EXISTS (SELECT 1 FROM property_files f WHERE f.property_id=p.id "
                             f"AND f.doc_role='{role}' AND f.status IN ({q}))").fetchone()["c"]
-    n, d, l = has("notice", ["uploaded"]), has("deed_of_trust", ["uploaded"]), has("loan_doc", ["uploaded", "none_found"])
+    n, d = has("notice", ["uploaded"]), has("deed_of_trust", ["uploaded"])
     complete = conn.execute(
         f"""SELECT COUNT(*) c {base}
             AND EXISTS (SELECT 1 FROM property_files f WHERE f.property_id=p.id AND f.doc_role='notice' AND f.status='uploaded')
             AND EXISTS (SELECT 1 FROM property_files f WHERE f.property_id=p.id AND f.doc_role='deed_of_trust' AND f.status='uploaded')
-            AND EXISTS (SELECT 1 FROM property_files f WHERE f.property_id=p.id AND f.doc_role='loan_doc' AND f.status IN ('uploaded','none_found'))
          """).fetchone()["c"]
     used = conn.execute("SELECT COALESCE(SUM(size_bytes),0) s FROM property_files WHERE status != 'removed'").fetchone()["s"]
     conn.close()
@@ -466,7 +478,7 @@ def stats():
         disk = {"free_mb": round(du.free / 1e6), "total_mb": round(du.total / 1e6)}
     except OSError:
         disk = {"error": "storage folder not available"}
-    return jsonify({"total": total, "with_notice": n, "with_deed": d, "with_loan": l, "complete": complete,
+    return jsonify({"total": total, "with_notice": n, "with_deed": d, "complete": complete,
                     "stored_mb": round(used / 1e6, 1), "disk": disk})
 
 
@@ -484,16 +496,14 @@ def _worklist_parts(a):
     if q:
         where.append("(p.address LIKE ? OR p.doc_number LIKE ? OR p.zip LIKE ?)")
         params += [f"%{q}%"] * 3
-    cond = {"notice": "n_notice = 0", "deed_of_trust": "n_deed = 0", "loan_doc": "n_loan = 0",
-            "complete": "n_notice > 0 AND n_deed > 0 AND n_loan > 0",
-            "any": "NOT (n_notice > 0 AND n_deed > 0 AND n_loan > 0)",
+    cond = {"notice": "n_notice = 0", "deed_of_trust": "n_deed = 0",
+            "complete": "n_notice > 0 AND n_deed > 0",
+            "any": "(n_notice = 0 OR n_deed = 0)",
             "minimum": "(n_notice = 0 OR n_deed = 0)"}.get(a.get("missing", "any"), "1=1")
     inner = f"""SELECT p.id, p.doc_number, p.address, p.city, p.zip, p.year, p.month, p.sale_date,
         (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='notice' AND f.status='uploaded') AS n_notice,
         (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='deed_of_trust' AND f.status='uploaded') AS n_deed,
-        (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='loan_doc' AND f.status IN ('uploaded','none_found')) AS n_loan,
         (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='deed_of_trust' AND f.status='none_found') AS deed_none,
-        (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='loan_doc' AND f.status='none_found') AS loan_none,
         (SELECT COUNT(*) FROM property_files f WHERE f.property_id=p.id AND f.doc_role='other_doc' AND f.status='uploaded') AS n_extra
         FROM properties p WHERE {' AND '.join(where)}"""
     return inner, params, cond
@@ -519,10 +529,9 @@ def worklist():
         d = dict(r)
         d["notice_state"] = "done" if d["n_notice"] else "missing"
         d["deed_state"] = "done" if d["n_deed"] else "missing"
-        d["loan_state"] = ("none_found" if d["loan_none"] else "done") if d["n_loan"] else "missing"
         d["extras"] = d["n_extra"]
-        d["progress"] = round(100 * (bool(d["n_notice"]) + bool(d["n_deed"]) + bool(d["n_loan"])) / 3)
-        d["next"] = ("notice" if not d["n_notice"] else "deed_of_trust" if not d["n_deed"] else "loan_doc" if not d["n_loan"] else None)
+        d["progress"] = round(100 * (bool(d["n_notice"]) + bool(d["n_deed"])) / 2)
+        d["next"] = "notice" if not d["n_notice"] else "deed_of_trust" if not d["n_deed"] else None
         d["notice_link"] = BEXAR_NOTICE_LINK.format(doc=d["doc_number"])
         d["list_month"] = d["sale_date"][:7] if d["sale_date"] else (f"{d['year']:04d}-{d['month']:02d}" if d["year"] and d["month"] else "")
         out.append(d)
@@ -576,9 +585,9 @@ def upload(pid):
     role = request.form.get("doc_role", "")
     if role not in ROLES + (EXTRA_ROLE,):
         return jsonify({"error": "unknown document type"}), 400
-    subtype = request.form.get("doc_subtype", "") if role == "loan_doc" else ""
-    if role == "loan_doc" and subtype not in SUBTYPES:
-        return jsonify({"error": "choose the loan document type"}), 400
+    subtype = request.form.get("doc_subtype", "") if role == EXTRA_ROLE else ""      # an additional document's type is optional
+    if subtype and subtype not in SUBTYPES:
+        return jsonify({"error": "unknown document type"}), 400
     f = request.files.get("file")
     if not f:
         return jsonify({"error": "no file"}), 400
@@ -630,9 +639,6 @@ def upload(pid):
     if role in ("notice", "deed_of_trust"):  # one current document for these; the older one is kept but retired
         conn.execute("UPDATE property_files SET status='removed', removed_by=?, removed_at=? "
                      "WHERE property_id=? AND doc_role=? AND status IN ('uploaded','none_found')", (uid, _now(), pid, role))
-    elif role == "loan_doc":
-        conn.execute("UPDATE property_files SET status='removed', removed_by=?, removed_at=? "
-                     "WHERE property_id=? AND doc_role='loan_doc' AND status='none_found'", (uid, _now(), pid))
     cur = conn.execute(
         """INSERT INTO property_files (property_id, doc_role, doc_subtype, status, doc_number, stamp_matches, fields_json,
                                        stored_path, original_name, size_bytes, sha256, note, uploaded_by, uploaded_at)
@@ -658,8 +664,8 @@ def upload(pid):
 def none_found(pid):
     b = request.get_json(silent=True) or {}
     role = b.get("doc_role")
-    if role not in ("deed_of_trust", "loan_doc"):
-        return jsonify({"error": "only the deed of trust or loan document can be marked not found"}), 400
+    if role != "deed_of_trust":
+        return jsonify({"error": "only the deed of trust can be marked not found"}), 400
     note = str(b.get("note") or "").strip()[:300]
     conn = get_conn()
     if not _property(conn, pid):
@@ -716,20 +722,18 @@ def get_file(fid):
 
 
 # ------------------------------------------------------------------ documents shown in the search list
-# Signed-in users see a "Documents" button on a property once ALL of its documents are in
-# (notice, deed of trust, and a loan document or a "none found"). Staff can open any uploaded file.
+# Signed-in users see a "Documents" button on a property once its REQUIRED documents are in
+# (the notice and the deed of trust). Staff can open any uploaded file.
 FACT_KEYS = {
     "notice": ("stamp_doc", "stamp_date", "sale_date", "deed_instrument"),
     "deed_of_trust": ("stamp_doc", "stamp_date", "dated", "borrower", "lender", "trustee",
                       "loan_number", "maturity_date", "principal"),
-    "loan_doc": ("stamp_doc", "stamp_date", "assignor", "assignee", "references", "principal"),
-    "other_doc": ("stamp_doc", "stamp_date", "title"),
+    "other_doc": ("stamp_doc", "stamp_date", "title", "assignor", "assignee", "references", "principal"),
 }
 
 
 def _complete(files):
-    return (_role_state(files, "notice") == "done" and _role_state(files, "deed_of_trust") == "done"
-            and _role_state(files, "loan_doc") in ("done", "none_found"))
+    return _role_state(files, "notice") == "done" and _role_state(files, "deed_of_trust") == "done"
 
 
 def attach_viewer_docs(conn, items):
@@ -743,11 +747,8 @@ def attach_viewer_docs(conn, items):
     for i in items:
         if i["id"] not in ids:
             continue
-        facts = {"notice": {}, "deed_of_trust": {}, "loan_docs": [], "other_docs": [], "loan_doc_none_found": False}
+        facts = {"notice": {}, "deed_of_trust": {}, "other_docs": []}
         for f in files_by.get(i["id"], []):
-            if f["status"] == "none_found":
-                facts["loan_doc_none_found"] = facts["loan_doc_none_found"] or f["doc_role"] == "loan_doc"
-                continue
             if f["status"] != "uploaded":
                 continue
             i["doc_files"].append({"id": f["id"], "role": f["doc_role"], "label": ROLE_LABELS[f["doc_role"]],
@@ -755,10 +756,8 @@ def attach_viewer_docs(conn, items):
                                    "title": f["fields"].get("title") or None,
                                    "url": f"/api/public/files/{f['id']}"})
             picked = {k: v for k, v in f["fields"].items() if k in FACT_KEYS[f["doc_role"]]}
-            if f["doc_role"] == "loan_doc":
+            if f["doc_role"] == EXTRA_ROLE:
                 picked["type"] = f["doc_subtype"] or ""
-                facts["loan_docs"].append(picked)
-            elif f["doc_role"] == EXTRA_ROLE:
                 facts["other_docs"].append(picked)
             else:
                 facts[f["doc_role"]] = picked
@@ -828,7 +827,7 @@ def _recheck_stamps(conn, pid):
 @require_intake
 def update_fields(fid):
     """Edit the details read from a saved document. The PDF itself is untouched. Body:
-    {"fields": {...}, "doc_subtype": "assignment"}   (doc_subtype only for loan documents)"""
+    {"fields": {...}, "doc_subtype": "assignment"}   (doc_subtype only for additional documents)"""
     b = request.get_json(silent=True) or {}
     conn = get_conn()
     row = conn.execute("SELECT id, property_id, doc_role, doc_subtype FROM property_files WHERE id = ? AND status = 'uploaded'", (fid,)).fetchone()
@@ -841,11 +840,11 @@ def update_fields(fid):
         conn.close()
         return jsonify({"error": "give the additional document a short title (for example 'HOA lien')"}), 400
     subtype = row["doc_subtype"]
-    if role == "loan_doc":
+    if role == EXTRA_ROLE:                     # an additional document's type is optional
         subtype = str(b.get("doc_subtype", subtype) or "")
-        if subtype not in SUBTYPES:
+        if subtype and subtype not in SUBTYPES:
             conn.close()
-            return jsonify({"error": "choose the loan document type"}), 400
+            return jsonify({"error": "unknown document type"}), 400
     conn.execute("UPDATE property_files SET fields_json = ?, doc_subtype = ?, doc_number = ? WHERE id = ?",
                  (json.dumps(fields), subtype, fields.get("stamp_doc", ""), fid))
     _recheck_stamps(conn, pid)
