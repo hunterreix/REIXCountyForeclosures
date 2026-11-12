@@ -25,8 +25,7 @@ MONTH_EXPR = "COALESCE(substr(sale_date, 1, 7), printf('%04d-%02d', year, month)
 _HAVE = ("EXISTS (SELECT 1 FROM property_files f WHERE f.property_id = properties.id "
          "AND f.doc_role = '{r}' AND f.status IN ({s}))")
 DOCS_COMPLETE = " AND ".join([_HAVE.format(r="notice", s="'uploaded'"),
-                              _HAVE.format(r="deed_of_trust", s="'uploaded'"),
-                              _HAVE.format(r="loan_doc", s="'uploaded','none_found'")])
+                              _HAVE.format(r="deed_of_trust", s="'uploaded'")])
 
 MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August",
                "September", "October", "November", "December"]
@@ -75,7 +74,7 @@ def summaries(conn, county="", ltype="", only_month=None):
 
 CSV_COLUMNS = ["list_month", "list_basis", "sale_date", "property_key", "county", "type", "notice_number",
                "address", "city", "zip", "lat", "lon", "notice_link", "docs_notice", "docs_deed_of_trust",
-               "docs_loan_doc", "docs_complete", "docs_extra"]
+               "docs_complete", "docs_extra"]
 
 
 def register(app, query_properties, require_api_key, get_conn):
@@ -119,7 +118,7 @@ def register(app, query_properties, require_api_key, get_conn):
                     w.writerow([p["list_month"], p["list_basis"], p.get("sale_date") or "", p["property_key"], p["county"],
                                 p["type"], p["doc_number"], p["address"], p["city"], p["zip"], p.get("lat") or "",
                                 p.get("lon") or "", p.get("doc_link") or "", s.get("notice"), s.get("deed_of_trust"),
-                                s.get("loan_doc"), p.get("docs_complete"), p.get("docs_extra", 0)])
+                                p.get("docs_complete"), p.get("docs_extra", 0)])
                 if page >= data["total_pages"] or page >= 100:
                     break
                 page += 1
