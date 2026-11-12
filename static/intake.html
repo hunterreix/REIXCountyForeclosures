@@ -45,6 +45,8 @@
   .bar{height:8px;background:#eceff2;border-radius:6px;overflow:hidden;margin:8px 0;} .bar>div{height:100%;background:var(--accent);width:0;transition:width .2s;}
   iframe.preview{width:100%;height:520px;border:1px solid var(--line);border-radius:10px;background:#fff;}
   .editbox{background:#f9fafb;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:6px 0 10px;} .editbox .actions{display:flex;gap:8px;margin-top:8px;}
+  .docsec{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:10px 0;} .docsec .sechead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:4px;}
+  .step{cursor:pointer;} .step:hover{box-shadow:0 0 0 2px #1b1f2418;} .flash{box-shadow:0 0 0 3px rgba(15,110,92,.35);transition:box-shadow .3s;}
   .file{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px;} .file:last-child{border-bottom:none;}
   .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .2s;z-index:50;} .toast.show{opacity:1;}
 </style>
@@ -76,7 +78,7 @@
       <input id="fq" placeholder="Search address, ZIP or doc #">
       <select id="fmissing">
         <option value="any">Needs documents</option><option value="notice">Missing notice</option>
-        <option value="deed_of_trust">Missing deed of trust</option><option value="loan_doc">Missing loan doc</option>
+        <option value="deed_of_trust">Missing deed of trust</option>
         <option value="complete">Complete</option><option value="all">All</option>
       </select>
       <select id="fyear"><option value="">Any year</option><option>2026</option><option>2027</option></select>
@@ -114,14 +116,13 @@
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 let csrf = "", me = null, page = 1, cur = null, picked = null, pickedUrl = null, lastQuery = null;
-const ROLE_LABEL = {notice:"Foreclosure notice", deed_of_trust:"Deed of Trust", loan_doc:"Loan document", other_doc:"Additional document"};
-const OCR_PAGES = {notice:4, deed_of_trust:2, loan_doc:3, other_doc:2};
+const ROLE_LABEL = {notice:"Foreclosure notice", deed_of_trust:"Deed of Trust", other_doc:"Additional document"};
+const OCR_PAGES = {notice:4, deed_of_trust:2, other_doc:2};
 const SUBTYPES = [["assignment","Assignment"],["note","Note"],["lien","Lien"],["release","Release"],["other","Other"]];
 const FIELDS = {
   notice:[["stamp_doc","Document # stamped on the notice","num"],["stamp_date","Recorded date (stamp)","date"],["deed_instrument","Deed of Trust document #","num"],["deed_recorded","Deed of Trust recorded on","date"],["deed_dated","Deed of Trust dated","date"],["borrower","Borrower","text"],["lender","Lender / beneficiary","text"],["principal","Original loan amount","text"],["sale_date","Sale date","date"]],
   deed_of_trust:[["stamp_doc","Document # stamped on the deed","num"],["stamp_date","Recorded date (stamp)","date"],["dated","Dated","date"],["borrower","Grantor(s) / Borrower(s)","text"],["lender","Lender (beneficiary)","text"],["trustee","DOT Lender Trustee","text"],["loan_number","Loan #","text"],["maturity_date","Loan end date (payoff date)","date"],["principal","Original loan amount","text"]],
-  loan_doc:[["stamp_doc","Document # stamped on the document","num"],["stamp_date","Recorded date (stamp)","date"],["assignor","Assignor / lienholder","text"],["assignee","Assignee","text"],["references","Deed of Trust # it refers to","num"],["principal","Amount","text"]],
-  other_doc:[["title","Title: what is this document? (required)","text"],["stamp_doc","Document # stamped on the document","num"],["stamp_date","Recorded date (stamp)","date"],["notes","Notes (internal, not shown to users)","text"]]
+  other_doc:[["title","Title: what is this document? (required)","text"],["stamp_doc","Document # stamped on the document","num"],["stamp_date","Recorded date (stamp)","date"],["assignor","From / lienholder / assignor (if any)","text"],["assignee","To / assignee (if any)","text"],["references","Deed of Trust # it refers to (if any)","num"],["principal","Amount (if any)","text"],["notes","Notes (internal, not shown to users)","text"]]
 };
 
 function toast(m){ const t=$("toast"); t.textContent=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2400); }
@@ -162,7 +163,7 @@ function pill(state, label){ const none = state==="none_found"; return '<span cl
 function progBar(p){ return '<div class="prog"><div class="track"><div style="width:'+(p||0)+'%"></div></div>'+(p||0)+'%</div>'; }
 async function loadStats(){
   const s = await api("/intake/api/stats");
-  $("stats").innerHTML = [["Notices",s.total],["Have notice PDF",s.with_notice],["Have deed of trust",s.with_deed],["Have loan doc / none",s.with_loan],["Complete",s.complete]]
+  $("stats").innerHTML = [["Notices",s.total],["Have notice PDF",s.with_notice],["Have deed of trust",s.with_deed],["Complete",s.complete]]
     .map(x=>'<div class="stat"><div class="n">'+x[1]+'</div><div class="l">'+x[0]+'</div></div>').join("");
   const d = s.disk || {};
   $("disk").textContent = d.error ? ("Storage: " + d.error) : ("Stored: " + s.stored_mb + " MB · Disk free: " + d.free_mb + " MB" + (d.free_mb < 200 ? " — LOW, resize the Render disk" : ""));
@@ -175,12 +176,12 @@ async function loadList(){
   if($("fmonth").value) p.set("month",$("fmonth").value);
   lastQuery = new URLSearchParams(p); lastQuery.delete("page");      // so "Next property" follows the same filters
   const j = await api("/intake/api/worklist?"+p);
-  const NEXT = {notice:"Upload notice", deed_of_trust:"Find deed of trust", loan_doc:"Find loan doc"};
+  const NEXT = {notice:"Upload notice", deed_of_trust:"Find deed of trust"};
   $("rows").innerHTML = j.results.length ? '<table><thead><tr><th>Address</th><th>Sale</th><th>Doc #</th><th>Documents</th><th>Progress</th><th>Next step</th><th></th></tr></thead><tbody>' +
     j.results.map(r=>'<tr><td><b>'+esc(r.address||"--")+'</b><div class="muted">'+esc(r.city||"")+' '+esc(r.zip||"")+'</div></td>'+
       '<td>'+(r.sale_date ? esc(r.sale_date) : '<span class="muted" title="Estimated from the county filing cycle; confirmed when the notice is processed">~ '+esc(r.list_month||"")+'</span>')+'</td>'+
       '<td><a href="'+esc(r.notice_link)+'" target="_blank" rel="noopener">'+esc(r.doc_number)+'</a></td>'+
-      '<td>'+pill(r.notice_state,"Notice")+pill(r.deed_state,"Deed")+pill(r.loan_state,"Loan")+(r.extras?' <span class="muted">+'+r.extras+' extra</span>':'')+'</td>'+
+      '<td>'+pill(r.notice_state,"Notice")+pill(r.deed_state,"Deed")+(r.extras?' <span class="muted">+'+r.extras+' extra</span>':'')+'</td>'+
       '<td>'+progBar(r.progress)+'</td>'+
       '<td>'+(r.next?esc(NEXT[r.next]):'<span class="pill done">Complete</span>')+'</td>'+
       '<td><button class="primary" data-id="'+r.id+'">'+(r.next?"Work on this":"Open")+'</button></td></tr>').join("") + '</tbody></table>'
@@ -193,11 +194,9 @@ async function loadList(){
 
 /* ---------- one property ---------- */
 function stepsHtml(g){ return g.steps.map(s=>{
-  const loanNone = s.role==="loan_doc" && s.state==="none_found";
-  const cls = loanNone ? "done" : s.state;
-  const txt = s.state==="done" ? "✓ On file" : loanNone ? "✓ None found (complete)" : s.state==="none_found" ? "Marked not found - needs attention"
-            : s.state==="optional" ? (s.count ? s.count+" added" : "Optional - add any extra documents") : g.current===s.role ? "← Do this now" : "Waiting";
-  return '<div class="step '+cls+(g.current===s.role?" current":"")+'"><b>'+esc(s.label)+'</b>'+txt+'</div>'; }).join(""); }
+  const txt = s.state==="done" ? "✓ On file" : s.state==="none_found" ? "Marked not found - needs attention"
+            : s.state==="optional" ? (s.count ? s.count+" added" : "Optional - click to add") : g.current===s.role ? "← Do this now" : "Waiting";
+  return '<div class="step '+s.state+(g.current===s.role?" current":"")+'" data-role="'+s.role+'" title="Click to add a '+esc((ROLE_LABEL[s.role]||"document").toLowerCase())+'"><b>'+esc(s.label)+'</b>'+txt+'</div>'; }).join(""); }
 
 function guideHtml(g, prop){
   const L = g.lookup || {};
@@ -212,7 +211,8 @@ function guideHtml(g, prop){
     if(L.loan_number) h += '<div>Loan #: <b>'+esc(L.loan_number)+'</b></div>';
     if(L.open_url) h += '<div style="margin-top:8px"><a class="btn primary" href="'+esc(L.open_url)+'" target="_blank" rel="noopener">Open the Clerk\'s site</a></div>';
     h += '</div>';
-    if(g.current!=="notice") h += '<div class="field"><label>If you can\'t find it (add a note)</label><input id="nfNote" placeholder="e.g. searched by borrower name, nothing recorded"><div style="margin-top:6px"><button id="nfBtn">'+(g.current==="loan_doc"?"None found":"Not found")+'</button></div></div>';
+    h += '<div class="muted" style="margin-top:8px">Have another document in hand first? Click <b>Additional documents</b> above, or use <b>+ Add</b> under Documents on file. You can add documents in any order.</div>';
+    if(g.current!=="notice") h += '<div class="field"><label>If you can\'t find it (add a note)</label><input id="nfNote" placeholder="e.g. searched by borrower name, nothing recorded"><div style="margin-top:6px"><button id="nfBtn">'+"Not found"+'</button></div></div>';
   } else h += '<div class="muted">'+(g.complete ? 'This property has everything required (100%). Found other documents for it, such as liens, HOA or tax papers? Add each one under <b>Upload a document</b> &rarr; <b>Additional document</b>.' : 'See the steps above.')+'</div>';
   return h;
 }
@@ -227,7 +227,7 @@ function uploadHtml(d){
   const cur_ = d.guidance.current || "other_doc";
   return '<h3>Upload a document</h3><div class="field"><label>Document type</label><select id="upRole">'+
     Object.keys(ROLE_LABEL).map(r=>'<option value="'+r+'"'+(r===cur_?" selected":"")+'>'+ROLE_LABEL[r]+'</option>').join("")+'</select></div>'+
-    '<div class="field hidden" id="subWrap"><label>Loan document type</label><select id="upSub"><option value="">Choose…</option>'+SUBTYPES.map(s=>'<option value="'+s[0]+'">'+s[1]+'</option>').join("")+'</select></div>'+
+    '<div class="field hidden" id="subWrap"><label>Type (optional)</label><select id="upSub"><option value="">Not specified</option>'+SUBTYPES.map(s=>'<option value="'+s[0]+'">'+s[1]+'</option>').join("")+'</select></div>'+
     '<div class="field hidden" id="nfBlock"><label id="nfLabel"></label><input id="nfNote2" placeholder="Note (optional): e.g. searched by borrower name, nothing recorded"><div style="margin-top:6px"><button id="nfBtn2"></button></div></div>'+
     '<div class="drop"><input type="file" id="upFile" accept="application/pdf,.pdf"><div style="margin-top:6px">PDF only, up to 25 MB. It is read on your computer; nothing is sent until you press Save.</div></div>'+
     '<div id="ocrBox" class="hidden"><div class="muted" id="ocrMsg"></div><div class="bar"><div id="ocrBar"></div></div></div>'+
@@ -251,17 +251,25 @@ function stampBadge(expected){
   $("stampBadge").innerHTML = h;
 }
 
+function fileRow(f){
+  const lab = f.doc_role==="other_doc" ? ((f.fields&&f.fields.title)||"Untitled") + (f.doc_subtype ? " ("+f.doc_subtype+")" : "") : ROLE_LABEL[f.doc_role];
+  const chk = f.stamp_matches===1?'<span class="badge ok">✓ number matches</span>':f.stamp_matches===0?'<span class="badge bad">number mismatch</span>':"";
+  if(f.status==="none_found") return '<div class="file"><div><b>'+esc(ROLE_LABEL[f.doc_role])+'</b>: marked not found<div class="muted">'+esc(f.note||"")+' · '+esc(f.by)+'</div></div><button data-rm="'+f.id+'">Undo</button></div>';
+  return '<div class="file"><div><b>'+esc(lab)+'</b> '+(f.doc_number?'#'+esc(f.doc_number):"")+' '+chk+'<div class="muted">'+esc(f.original_name)+' · '+esc(f.by)+' · '+esc((f.uploaded_at||"").slice(0,10))+'</div></div>'+
+    '<div><button data-view="'+f.id+'">View</button> <button data-edit="'+f.id+'">Edit details</button> <button data-rm="'+f.id+'">Remove</button></div></div>'+
+    '<div class="editbox hidden" id="edit-'+f.id+'"></div>';
+}
+// one table per kind of document; each has its own button, so any of them can be filled in at any time
 function filesHtml(d){
   const fs = d.files.filter(f=>f.status!=="removed");
-  if(!fs.length) return '<div class="muted">Nothing uploaded yet.</div>';
-  return fs.map(f=>{
-    const lab = f.doc_role==="other_doc" ? ("Additional: " + ((f.fields&&f.fields.title)||"untitled")) : ROLE_LABEL[f.doc_role] + (f.doc_subtype?" ("+f.doc_subtype+")":"");
-    const chk = f.stamp_matches===1?'<span class="badge ok">✓ number matches</span>':f.stamp_matches===0?'<span class="badge bad">number mismatch</span>':"";
-    if(f.status==="none_found") return '<div class="file"><div><b>'+esc(lab)+'</b>: marked not found<div class="muted">'+esc(f.note||"")+' · '+esc(f.by)+'</div></div><button data-rm="'+f.id+'">Undo</button></div>';
-    return '<div class="file"><div><b>'+esc(lab)+'</b> '+(f.doc_number?'#'+esc(f.doc_number):"")+' '+chk+'<div class="muted">'+esc(f.original_name)+' · '+esc(f.by)+' · '+esc((f.uploaded_at||"").slice(0,10))+'</div></div>'+
-      '<div><button data-view="'+f.id+'">View</button> <button data-edit="'+f.id+'">Edit details</button> <button data-rm="'+f.id+'">Remove</button></div></div>'+
-      '<div class="editbox hidden" id="edit-'+f.id+'"></div>';
-  }).join("");
+  const sec = (role, title, hint) => {
+    const mine = fs.filter(f=>f.doc_role===role), have = mine.some(f=>f.status==="uploaded");
+    const btn = '<button class="primary" data-add="'+role+'">'+(role==="other_doc" ? "+ Add" : have ? "Replace" : "Upload")+'</button>';
+    return '<div class="docsec" id="sec-'+role+'"><div class="sechead"><div><b>'+esc(title)+'</b> <span class="muted">'+esc(hint)+'</span></div>'+btn+'</div>'+
+      (mine.length ? mine.map(fileRow).join("") : '<div class="muted" style="padding:6px 0">'+(role==="other_doc" ? "Nothing added yet." : "Not uploaded yet.")+'</div>')+'</div>';
+  };
+  return sec("notice","1. Foreclosure notice","required") + sec("deed_of_trust","2. Deed of Trust","required") +
+         sec("other_doc","Additional documents","optional: assignments, notes, liens, releases, HOA or tax papers, title work...");
 }
 
 function renderProperty(d){
@@ -271,6 +279,7 @@ function renderProperty(d){
   const pr = d.guidance.progress;
   $("pprog").innerHTML = '<div class="prog"><div class="track" style="width:220px"><div style="width:'+pr.percent+'%"></div></div><b>'+pr.percent+'% complete</b> <span class="muted">('+pr.done+' of '+pr.total+' required)'+(d.guidance.extras ? ' + '+d.guidance.extras+' additional' : '')+'</span></div>';
   $("steps").innerHTML = stepsHtml(d.guidance);
+  $("steps").querySelectorAll("[data-role]").forEach(el=>el.onclick=()=>selectRole(el.dataset.role));   // jump straight to any document type
   const ready = d.guidance.steps[0].state === "done" && d.guidance.steps[1].state === "done";   // notice + deed of trust are in
   $("nextBtn").disabled = !ready;
   $("nextBtn").title = ready ? "Go to the next property in your list" : "Add the notice and the deed of trust first";
@@ -286,16 +295,24 @@ function renderProperty(d){
     try{ renderProperty(await api("/intake/api/property/"+p.id+"/none-found",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({doc_role:$("upRole").value,note:$("nfNote2").value})})); toast("Saved"); }catch(e){ toast(e.message); } };
   $("files").querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>window.open("/intake/api/file/"+b.dataset.view,"_blank"));
   $("files").querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>toggleEdit(b.dataset.edit));
+  $("files").querySelectorAll("[data-add]").forEach(b=>b.onclick=()=>selectRole(b.dataset.add));
   $("files").querySelectorAll("[data-rm]").forEach(b=>b.onclick=async ()=>{ if(!confirm("Remove this? The PDF is kept for the audit trail but is no longer used.")) return;
     try{ renderProperty(await api("/intake/api/file/"+b.dataset.rm+"/remove",{method:"POST"})); toast("Removed"); }catch(e){ toast(e.message); } });
   $("upRole").onchange = syncRole; $("upFile").onchange = onFile; syncRole();
 }
 function syncRole(){
   const role = $("upRole").value;
-  $("subWrap").classList.toggle("hidden", role!=="loan_doc");
-  $("nfBlock").classList.toggle("hidden", role!=="loan_doc" && role!=="deed_of_trust");
-  $("nfLabel").textContent = role==="loan_doc" ? "No loan document on record? Mark it as none found (this counts as complete)." : "Can't find the deed of trust? Mark it as not found.";
-  $("nfBtn2").textContent = role==="loan_doc" ? "None found - loan document" : "Not found - deed of trust";
+  $("subWrap").classList.toggle("hidden", role!=="other_doc");              // an additional document can be typed (optional)
+  $("nfBlock").classList.toggle("hidden", role!=="deed_of_trust");           // only the deed of trust can be marked not found
+  $("nfLabel").textContent = "Can't find the deed of trust? Mark it as not found.";
+  $("nfBtn2").textContent = "Not found - deed of trust";
+}
+// point the upload form at one kind of document and bring it into view
+function selectRole(role){
+  const sel = $("upRole"); if(!sel) return;
+  sel.value = role; syncRole();
+  const card = $("uploadCard"); card.scrollIntoView({behavior:"smooth", block:"center"});
+  card.classList.add("flash"); setTimeout(()=>card.classList.remove("flash"), 1300);
 }
 /* ---------- next property ---------- */
 async function goNext(){
@@ -314,7 +331,7 @@ function toggleEdit(id){
   if(!box.classList.contains("hidden")){ box.classList.add("hidden"); box.innerHTML = ""; return; }
   const f = cur.files.find(x=>String(x.id)===String(id)); if(!f) return;
   let h = '<b>Details read from this document</b> <span class="muted">(the PDF itself is not changed)</span>';
-  if(f.doc_role==="loan_doc") h += '<div class="field"><label>Loan document type</label><select data-ef-sub>'+SUBTYPES.map(x=>'<option value="'+x[0]+'"'+(x[0]===f.doc_subtype?" selected":"")+'>'+x[1]+'</option>').join("")+'</select></div>';
+  if(f.doc_role==="other_doc") h += '<div class="field"><label>Type (optional)</label><select data-ef-sub><option value="">Not specified</option>'+SUBTYPES.map(x=>'<option value="'+x[0]+'"'+(x[0]===f.doc_subtype?" selected":"")+'>'+x[1]+'</option>').join("")+'</select></div>';
   h += FIELDS[f.doc_role].map(x=>'<div class="field"><label>'+esc(x[1])+'</label><input data-ef="'+x[0]+'" type="'+(x[2]==="date"?"date":"text")+'" value="'+esc((f.fields||{})[x[0]]||"")+'"></div>').join("");
   h += '<div class="actions"><button class="primary" data-save-edit="'+id+'">Save changes</button><button data-cancel-edit="'+id+'">Cancel</button></div>';
   box.innerHTML = h; box.classList.remove("hidden");
@@ -387,8 +404,8 @@ async function onFile(){
       text = await readPdfText(f, OCR_PAGES[role], prog);
     }
     const P = IntakeParse;
-    vals = role==="notice" ? P.parseNotice(text) : role==="deed_of_trust" ? P.parseDeedOfTrust(text) : role==="other_doc" ? P.parseOtherDoc(text) : P.parseLoanDoc(text);
-    if(role==="loan_doc" && vals.subtype && !$("upSub").value) $("upSub").value = vals.subtype;
+    vals = role==="notice" ? P.parseNotice(text) : role==="deed_of_trust" ? P.parseDeedOfTrust(text) : P.parseOtherDoc(text);
+    if(role==="other_doc" && vals.subtype && !$("upSub").value) $("upSub").value = vals.subtype;
     $("ocrMsg").textContent = "Done reading. Please check the values below."; $("ocrBar").style.width="100%";
   }catch(e){ $("ocrMsg").textContent = "Couldn't read this PDF automatically (" + e.message + "). Type the values from the document instead."; }
   $("fieldsBox").innerHTML = fieldsHtml(role, vals, expected);
@@ -400,13 +417,13 @@ async function onFile(){
 async function save(){
   const role = $("upRole").value, fields = {};
   document.querySelectorAll("[data-f]").forEach(i=>{ if(i.value) fields[i.dataset.f] = i.value.trim(); });
-  if(role==="loan_doc" && !$("upSub").value){ toast("Choose the loan document type"); return; }
   if(role==="other_doc" && !(fields.title||"").trim()){ toast("Give this document a short title first"); return; }
   const fd = new FormData(); fd.append("file", picked); fd.append("doc_role", role); fd.append("doc_subtype", $("upSub").value); fd.append("fields", JSON.stringify(fields));
   $("saveBtn").disabled = true; $("saveBtn").textContent = "Saving…";
   try{
     const j = await api("/intake/api/property/"+cur.property.id+"/upload",{method:"POST",body:fd});
     renderProperty(j);
+    if(role==="other_doc"){ $("upRole").value = "other_doc"; syncRole(); }      // stay on additional documents so several can be added in a row
     toast(j.stamp_matches===0 ? "Saved - but the number did not match, please double-check" : "Saved");
     $("fieldsBox").innerHTML = "";
   }catch(e){ toast(e.message); $("saveBtn").disabled=false; $("saveBtn").textContent="Save to this property"; }
