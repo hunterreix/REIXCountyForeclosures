@@ -118,11 +118,15 @@ const esc = s => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"
 let csrf = "", me = null, page = 1, cur = null, picked = null, pickedUrl = null, lastQuery = null;
 const ROLE_LABEL = {notice:"Foreclosure notice", deed_of_trust:"Deed of Trust", other_doc:"Additional document"};
 const OCR_PAGES = {notice:4, deed_of_trust:2, other_doc:2};
-const SUBTYPES = [["assignment","Assignment"],["note","Note"],["lien","Lien"],["release","Release"],["other","Other"]];
+const DOC_NAMES = [["additional_deed_of_trust","Additional Deed of Trust"],["modification","Modification"],["lis_pendens","Lis Pendens"],["judgment","Judgment"],["tax_lien","Tax Lien"],["other_lien","Other Lien"],["affidavit","Affidavit"],["notice","Notice"],["city_lien","City Lien"],["back_tax_report","Back Tax Report"],["irs_lien","IRS Lien"],["federal_tax_lien","Federal Tax Lien"]];
+const DOC_NAME = Object.fromEntries(DOC_NAMES);
+const LEGACY_NAME = {assignment:"Assignment", note:"Note", lien:"Lien", release:"Release", other:"Other"};   // older documents: still shown and editable
+const LIEN_OPTS = [["first","1st lien"],["subordinate","Subordinate lien"]];
+const CLERK_URL = ["clerk_url","Courthouse page address: paste it from your browser (gives everyone a direct link)","url"];
 const FIELDS = {
-  notice:[["stamp_doc","Document # stamped on the notice","num"],["stamp_date","Recorded date (stamp)","date"],["deed_instrument","Deed of Trust document #","num"],["deed_recorded","Deed of Trust recorded on","date"],["deed_dated","Deed of Trust dated","date"],["borrower","Borrower","text"],["lender","Lender / beneficiary","text"],["principal","Original loan amount","text"],["sale_date","Sale date","date"]],
-  deed_of_trust:[["stamp_doc","Document # stamped on the deed","num"],["stamp_date","Recorded date (stamp)","date"],["dated","Dated","date"],["borrower","Grantor(s) / Borrower(s)","text"],["lender","Lender (beneficiary)","text"],["trustee","DOT Lender Trustee","text"],["loan_number","Loan #","text"],["maturity_date","Loan end date (payoff date)","date"],["principal","Original loan amount","text"]],
-  other_doc:[["title","Title: what is this document? (required)","text"],["stamp_doc","Document # stamped on the document","num"],["stamp_date","Recorded date (stamp)","date"],["assignor","From / lienholder / assignor (if any)","text"],["assignee","To / assignee (if any)","text"],["references","Deed of Trust # it refers to (if any)","num"],["principal","Amount (if any)","text"],["notes","Notes (internal, not shown to users)","text"]]
+  notice:[["stamp_doc","Document # stamped on the notice","num"],["stamp_date","Recorded date (stamp)","date"],["deed_instrument","Deed of Trust document #","num"],["deed_recorded","Deed of Trust recorded on","date"],["deed_dated","Deed of Trust dated","date"],["borrower","Borrower","text"],["lender","Lender / beneficiary","text"],["principal","Original loan amount","text"],["sale_date","Sale date","date"],CLERK_URL],
+  deed_of_trust:[["lien_position","Lien position (required)","choice",LIEN_OPTS],["stamp_doc","Document # stamped on the deed (required)","num"],["stamp_date","Recorded date (stamp)","date"],["dated","Dated","date"],["borrower","Grantor(s) / Borrower(s)","text"],["lender","Lender (beneficiary)","text"],["trustee","DOT Lender Trustee","text"],["loan_number","Loan #","text"],["maturity_date","Loan end date (payoff date)","date"],["principal","Original loan amount","text"],CLERK_URL],
+  other_doc:[["stamp_doc","Document # stamped on the document (required, except for a Back Tax Report)","num"],["stamp_date","Recorded date (stamp)","date"],["amount","Amount owed / amount of the lien or judgment (required for a Back Tax Report)","money"],CLERK_URL,["assignor","From / lienholder / lender (if any)","text"],["assignee","To / borrower (if any)","text"],["references","Deed of Trust # it refers to (if any)","num"],["notes","Notes (internal, not shown to users)","text"]]
 };
 
 function toast(m){ const t=$("toast"); t.textContent=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2400); }
@@ -227,16 +231,32 @@ function uploadHtml(d){
   const cur_ = d.guidance.current || "other_doc";
   return '<h3>Upload a document</h3><div class="field"><label>Document type</label><select id="upRole">'+
     Object.keys(ROLE_LABEL).map(r=>'<option value="'+r+'"'+(r===cur_?" selected":"")+'>'+ROLE_LABEL[r]+'</option>').join("")+'</select></div>'+
-    '<div class="field hidden" id="subWrap"><label>Type (optional)</label><select id="upSub"><option value="">Not specified</option>'+SUBTYPES.map(s=>'<option value="'+s[0]+'">'+s[1]+'</option>').join("")+'</select></div>'+
+    '<div class="field hidden" id="subWrap"><label>Document name (required)</label><select id="upSub"><option value="">Choose…</option>'+DOC_NAMES.map(s=>'<option value="'+s[0]+'">'+s[1]+'</option>').join("")+'</select><div class="muted" id="subHint" style="margin-top:4px"></div></div>'+
     '<div class="field hidden" id="nfBlock"><label id="nfLabel"></label><input id="nfNote2" placeholder="Note (optional): e.g. searched by borrower name, nothing recorded"><div style="margin-top:6px"><button id="nfBtn2"></button></div></div>'+
     '<div class="drop"><input type="file" id="upFile" accept="application/pdf,.pdf"><div style="margin-top:6px">PDF only, up to 25 MB. It is read on your computer; nothing is sent until you press Save.</div></div>'+
     '<div id="ocrBox" class="hidden"><div class="muted" id="ocrMsg"></div><div class="bar"><div id="ocrBar"></div></div></div>'+
     '<div id="fieldsBox"></div>';
 }
 
+function inputHtml(x, val, attr, cls){
+  const c = cls ? ' class="'+cls+'"' : "";
+  if(x[2]==="choice") return '<select '+attr+'="'+x[0]+'"'+c+'><option value="">Choose…</option>'+x[3].map(o=>'<option value="'+o[0]+'"'+(o[0]===val?" selected":"")+'>'+o[1]+'</option>').join("")+'</select>';
+  return '<input '+attr+'="'+x[0]+'" type="'+(x[2]==="date"?"date":"text")+'" value="'+esc(val||"")+'"'+c+(x[2]==="url" ? ' placeholder="https://bexar.tx.publicsearch.us/doc/…"' : "")+'>';
+}
+// what must be filled in before a document can be saved
+function missingDetails(role, sub, fields){
+  if(role==="deed_of_trust"){ if(!fields.lien_position) return "Choose the lien position: 1st lien or Subordinate lien"; if(!fields.stamp_doc) return "Enter the deed of trust's document number"; }
+  if(role==="other_doc"){
+    if(!sub) return "Choose the document name";
+    if(sub==="back_tax_report"){ if(!fields.amount) return "Enter the amount owed from the back tax report"; }
+    else if(!fields.stamp_doc) return "Enter the document number";
+  }
+  return "";
+}
+
 function fieldsHtml(role, vals, expected){
   let h = '<div style="margin-top:12px"><b>Check what was read</b> <span class="muted">(fix anything that looks wrong)</span></div>';
-  h += FIELDS[role].map(f=>'<div class="field"><label>'+esc(f[1])+'</label><input data-f="'+f[0]+'" type="'+(f[2]==="date"?"date":"text")+'" value="'+esc(vals[f[0]]||"")+'" class="'+(vals[f[0]]?"":"empty")+'"></div>').join("");
+  h += FIELDS[role].map(f=>'<div class="field"><label>'+esc(f[1])+'</label>'+inputHtml(f, vals[f[0]], "data-f", vals[f[0]] ? "" : "empty")+'</div>').join("");
   h += '<div id="stampBadge" style="margin:8px 0"></div><button class="primary" id="saveBtn">Save to this property</button>';
   return h;
 }
@@ -252,10 +272,17 @@ function stampBadge(expected){
 }
 
 function fileRow(f){
-  const lab = f.doc_role==="other_doc" ? ((f.fields&&f.fields.title)||"Untitled") + (f.doc_subtype ? " ("+f.doc_subtype+")" : "") : ROLE_LABEL[f.doc_role];
+  const fl = f.fields || {};
+  const name = f.doc_role==="other_doc" ? (DOC_NAME[f.doc_subtype] || (LEGACY_NAME[f.doc_subtype] ? LEGACY_NAME[f.doc_subtype]+" (older type)" : fl.title) || "Untitled") : ROLE_LABEL[f.doc_role];
   const chk = f.stamp_matches===1?'<span class="badge ok">✓ number matches</span>':f.stamp_matches===0?'<span class="badge bad">number mismatch</span>':"";
   if(f.status==="none_found") return '<div class="file"><div><b>'+esc(ROLE_LABEL[f.doc_role])+'</b>: marked not found<div class="muted">'+esc(f.note||"")+' · '+esc(f.by)+'</div></div><button data-rm="'+f.id+'">Undo</button></div>';
-  return '<div class="file"><div><b>'+esc(lab)+'</b> '+(f.doc_number?'#'+esc(f.doc_number):"")+' '+chk+'<div class="muted">'+esc(f.original_name)+' · '+esc(f.by)+' · '+esc((f.uploaded_at||"").slice(0,10))+'</div></div>'+
+  const backTax = f.doc_role==="other_doc" && f.doc_subtype==="back_tax_report";
+  const tags = (f.doc_role==="deed_of_trust" ? (fl.lien_position ? '<span class="badge ok">'+(fl.lien_position==="first" ? "1st lien" : "Subordinate lien")+'</span>' : '<span class="badge unk">⚠ lien position missing</span>') : "")
+    + (backTax ? (fl.amount ? '<span class="badge ok">owed $'+esc(fl.amount)+'</span>' : '<span class="badge unk">⚠ amount owed missing</span>') : "")
+    + (f.doc_role!=="notice" && !f.doc_number && !backTax ? '<span class="badge unk">⚠ document # missing</span>' : "")
+    + (f.doc_role==="other_doc" && !DOC_NAME[f.doc_subtype] ? '<span class="badge unk">⚠ choose a document name</span>' : "");
+  const link = f.courthouse_url ? ' <a href="'+esc(f.courthouse_url)+'" target="_blank" rel="noopener">Courthouse record &#8599;</a>' : "";
+  return '<div class="file"><div><b>'+esc(name)+'</b> '+(f.doc_number?'#'+esc(f.doc_number):"")+' '+chk+' '+tags+link+'<div class="muted">'+esc(f.original_name)+' · '+esc(f.by)+' · '+esc((f.uploaded_at||"").slice(0,10))+'</div></div>'+
     '<div><button data-view="'+f.id+'">View</button> <button data-edit="'+f.id+'">Edit details</button> <button data-rm="'+f.id+'">Remove</button></div></div>'+
     '<div class="editbox hidden" id="edit-'+f.id+'"></div>';
 }
@@ -298,7 +325,7 @@ function renderProperty(d){
   $("files").querySelectorAll("[data-add]").forEach(b=>b.onclick=()=>selectRole(b.dataset.add));
   $("files").querySelectorAll("[data-rm]").forEach(b=>b.onclick=async ()=>{ if(!confirm("Remove this? The PDF is kept for the audit trail but is no longer used.")) return;
     try{ renderProperty(await api("/intake/api/file/"+b.dataset.rm+"/remove",{method:"POST"})); toast("Removed"); }catch(e){ toast(e.message); } });
-  $("upRole").onchange = syncRole; $("upFile").onchange = onFile; syncRole();
+  $("upRole").onchange = syncRole; $("upSub").onchange = syncRole; $("upFile").onchange = onFile; syncRole();
 }
 function syncRole(){
   const role = $("upRole").value;
@@ -306,6 +333,8 @@ function syncRole(){
   $("nfBlock").classList.toggle("hidden", role!=="deed_of_trust");           // only the deed of trust can be marked not found
   $("nfLabel").textContent = "Can't find the deed of trust? Mark it as not found.";
   $("nfBtn2").textContent = "Not found - deed of trust";
+  const sub = $("upSub").value;                                              // a hint for the chosen document name
+  $("subHint").textContent = sub==="modification" ? "Only the most recent modification of the original loan is needed." : sub==="back_tax_report" ? "No document number is needed for a back tax report: enter the amount owed." : "";
 }
 // point the upload form at one kind of document and bring it into view
 function selectRole(role){
@@ -331,8 +360,8 @@ function toggleEdit(id){
   if(!box.classList.contains("hidden")){ box.classList.add("hidden"); box.innerHTML = ""; return; }
   const f = cur.files.find(x=>String(x.id)===String(id)); if(!f) return;
   let h = '<b>Details read from this document</b> <span class="muted">(the PDF itself is not changed)</span>';
-  if(f.doc_role==="other_doc") h += '<div class="field"><label>Type (optional)</label><select data-ef-sub><option value="">Not specified</option>'+SUBTYPES.map(x=>'<option value="'+x[0]+'"'+(x[0]===f.doc_subtype?" selected":"")+'>'+x[1]+'</option>').join("")+'</select></div>';
-  h += FIELDS[f.doc_role].map(x=>'<div class="field"><label>'+esc(x[1])+'</label><input data-ef="'+x[0]+'" type="'+(x[2]==="date"?"date":"text")+'" value="'+esc((f.fields||{})[x[0]]||"")+'"></div>').join("");
+  if(f.doc_role==="other_doc") h += '<div class="field"><label>Document name (required)</label><select data-ef-sub><option value="">Choose…</option>'+DOC_NAMES.map(x=>'<option value="'+x[0]+'"'+(x[0]===f.doc_subtype?" selected":"")+'>'+x[1]+'</option>').join("")+(LEGACY_NAME[f.doc_subtype] ? '<option value="'+f.doc_subtype+'" selected>'+LEGACY_NAME[f.doc_subtype]+' (older type - please choose a name)</option>' : "")+'</select></div>';
+  h += FIELDS[f.doc_role].map(x=>'<div class="field"><label>'+esc(x[1])+'</label>'+inputHtml(x, (f.fields||{})[x[0]], "data-ef", "")+'</div>').join("");
   h += '<div class="actions"><button class="primary" data-save-edit="'+id+'">Save changes</button><button data-cancel-edit="'+id+'">Cancel</button></div>';
   box.innerHTML = h; box.classList.remove("hidden");
   box.querySelector("[data-save-edit]").onclick = ()=>saveEdit(id);
@@ -341,8 +370,9 @@ function toggleEdit(id){
 async function saveEdit(id){
   const box = $("edit-"+id), f = cur.files.find(x=>String(x.id)===String(id)), fields = {};
   box.querySelectorAll("[data-ef]").forEach(i=>{ if(i.value.trim()) fields[i.dataset.ef] = i.value.trim(); });
-  if(f.doc_role==="other_doc" && !fields.title){ toast("Give this document a short title first"); return; }
-  const body = {fields}, sub = box.querySelector("[data-ef-sub]"); if(sub) body.doc_subtype = sub.value;
+  const subEl = box.querySelector("[data-ef-sub]"), problem = missingDetails(f.doc_role, subEl ? subEl.value : "", fields);
+  if(problem){ toast(problem); return; }
+  const body = {fields}; if(subEl) body.doc_subtype = subEl.value;
   try{ renderProperty(await api("/intake/api/file/"+id+"/fields",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})); toast("Details saved"); }
   catch(e){ toast(e.message); }
 }
@@ -405,7 +435,7 @@ async function onFile(){
     }
     const P = IntakeParse;
     vals = role==="notice" ? P.parseNotice(text) : role==="deed_of_trust" ? P.parseDeedOfTrust(text) : P.parseOtherDoc(text);
-    if(role==="other_doc" && vals.subtype && !$("upSub").value) $("upSub").value = vals.subtype;
+    if(role==="other_doc" && vals.subtype && !$("upSub").value){ $("upSub").value = vals.subtype; syncRole(); }
     $("ocrMsg").textContent = "Done reading. Please check the values below."; $("ocrBar").style.width="100%";
   }catch(e){ $("ocrMsg").textContent = "Couldn't read this PDF automatically (" + e.message + "). Type the values from the document instead."; }
   $("fieldsBox").innerHTML = fieldsHtml(role, vals, expected);
@@ -415,13 +445,19 @@ async function onFile(){
 }
 
 async function save(){
-  const role = $("upRole").value, fields = {};
+  const role = $("upRole").value, sub = $("upSub").value, fields = {};
   document.querySelectorAll("[data-f]").forEach(i=>{ if(i.value) fields[i.dataset.f] = i.value.trim(); });
-  if(role==="other_doc" && !(fields.title||"").trim()){ toast("Give this document a short title first"); return; }
+  const problem = missingDetails(role, sub, fields); if(problem){ toast(problem); return; }
+  let replaceIds = [];                                   // only the most recent modification of the original loan is needed
+  if(role==="other_doc" && sub==="modification"){
+    const older = cur.files.filter(f=>f.doc_role==="other_doc" && f.doc_subtype==="modification" && f.status==="uploaded");
+    if(older.length && confirm("A modification is already on file. Only the most recent one is needed.\n\nOK = replace the one on file with this one.\nCancel = keep both.")) replaceIds = older.map(f=>f.id);
+  }
   const fd = new FormData(); fd.append("file", picked); fd.append("doc_role", role); fd.append("doc_subtype", $("upSub").value); fd.append("fields", JSON.stringify(fields));
   $("saveBtn").disabled = true; $("saveBtn").textContent = "Saving…";
   try{
-    const j = await api("/intake/api/property/"+cur.property.id+"/upload",{method:"POST",body:fd});
+    let j = await api("/intake/api/property/"+cur.property.id+"/upload",{method:"POST",body:fd});
+    for(const id of replaceIds){ j = await api("/intake/api/file/"+id+"/remove",{method:"POST"}); }
     renderProperty(j);
     if(role==="other_doc"){ $("upRole").value = "other_doc"; syncRole(); }      // stay on additional documents so several can be added in a row
     toast(j.stamp_matches===0 ? "Saved - but the number did not match, please double-check" : "Saved");
