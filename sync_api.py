@@ -3,7 +3,7 @@ sync_api.py - How the REIX app (app.reix.co) stays in step with us.
 
 THE SCENARIO THIS SUPPORTS
   Day 1: a notice arrives; REIX app is given the property (with its stable property_key).
-  Day 2: a person uploads the notice / deed of trust / loan documents for it.
+  Day 2: a person uploads the notice and deed of trust (and any additional documents) for it.
   Day 2+: REIX app learns about it from the change feed, fetches the documents for that
           same property_key, and pairs them with the property it already holds.
 
@@ -57,7 +57,7 @@ def _secret_ok():
 
 
 def attach_status(conn, items):
-    """Adds property_key and docs_status (notice / deed_of_trust / loan_doc -> missing | done |
+    """Adds property_key and docs_status (notice / deed_of_trust -> missing | done |
     none_found) to each property. Safe to show to any signed-in user: no names, no files."""
     ids = [i["id"] for i in items]
     for i in items:
@@ -80,7 +80,7 @@ def attach_status(conn, items):
                 st[r["doc_role"]] = "none_found"
     for i in items:
         s = i["docs_status"]
-        i["docs_complete"] = s["notice"] == "done" and s["deed_of_trust"] == "done" and s["loan_doc"] in ("done", "none_found")
+        i["docs_complete"] = s["notice"] == "done" and s["deed_of_trust"] == "done"
     return items
 
 
