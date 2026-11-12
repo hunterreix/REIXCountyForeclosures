@@ -78,6 +78,13 @@
   // When the note is due in full (the "loan end date" / payoff date)
   var MATURITY = new RegExp("(?:Maturity\\s+Date|Date\\s+of\\s+Maturity|matures?\\s+on|due\\s+and\\s+payable\\s+(?:in\\s+full\\s+)?on|final\\s+(?:payment|installment)[^.]{0,80}?(?:due|payable)\\s+on)\\s*[:\\-]?\\s*(" + DATE_SRC + ")", "i");
 
+  // "1st lien" or "subordinate", when the deed of trust says so (the person confirms either way)
+  function lienPosition(t) {
+    if (/\b(?:second|2nd|junior|subordinate)\b[^.]{0,40}\b(?:lien|deed\s+of\s+trust|mortgage)\b/i.test(t)) return "subordinate";
+    if (/\b(?:first|1st)\s+lien\b/i.test(t)) return "first";
+    return "";
+  }
+
   function parseDeedOfTrust(text) {
     var stamp = findStamp(text), t = flat(text), x = String(text || "");
     var dated = first(new RegExp("(?:dated|Date)\\s*[:\\-]?\\s*(" + DATE_SRC + ")", "i"), t);
@@ -89,6 +96,7 @@
       trustee: line(/Trustee\s*[:\-]\s*([^\n]{2,100})/i, x),
       loan_number: first(/Loan\s*(?:No\.?|Number|#)\s*[:.]?\s*([A-Za-z0-9][A-Za-z0-9\-\/]{3,30})/i, t),
       maturity_date: toIso(first(MATURITY, t)),
+      lien_position: lienPosition(t),
       principal: principalOf(t),
       _looksLikeDeedOfTrust: /DEED\s+OF\s+TRUST/i.test(t)
     };
@@ -107,18 +115,42 @@
     };
   }
 
-  // Any other document: read the recording stamp, and guess a title from its first ALL-CAPS heading line
+  // Which of the document names an additional document looks like, from its heading and wording
+  function guessDocName(t) {
+    var x = String(t || "");
+    if (/lis\s+pendens/i.test(x)) return "lis_pendens";
+    if (/federal\s+tax\s+lien/i.test(x)) return "federal_tax_lien";
+    if ((/internal\s+revenue\s+service/i.test(x) || /\bIRS\b/.test(x)) && /lien/i.test(x)) return "irs_lien";
+    if (/(?:city|municipal|code\s+(?:enforcement|compliance))[^.]{0,80}lien/i.test(x)) return "city_lien";
+    if (/tax\s+lien/i.test(x)) return "tax_lien";
+    if (/judg(?:e)?ment/i.test(x)) return "judgment";
+    if (/modification/i.test(x)) return "modification";
+    if (/affidavit/i.test(x)) return "affidavit";
+    if (/(?:back|delinquent)\s+tax|tax\s+(?:certificate|statement|report)|taxes\s+due/i.test(x)) return "back_tax_report";
+    if (/deed\s+of\s+trust/i.test(x) && !/release|assignment/i.test(x)) return "additional_deed_of_trust";
+    if (/\blien\b/i.test(x)) return "other_lien";
+    if (/\bnotice\b/i.test(x)) return "notice";
+    return "";
+  }
+
+  // The amount owed / amount of the lien, judgment or loan
+  function moneyOf(t) {
+    var m = /(?:total\s+(?:amount\s+)?due|amount\s+(?:due|owed)|total\s+taxes?(?:\s+due)?|balance\s+due)[^$\d]{0,30}\$?\s?([\d,]+(?:\.\d{2})?)/i.exec(t) ||
+            /\$\s?([\d,]+(?:\.\d{2})?)/.exec(t);
+    return m ? tidy(m[1]) : "";
+  }
+
+  // Any additional document: the recording stamp, which document name it looks like, an amount, and any parties
   function parseOtherDoc(text) {
-    var stamp = findStamp(text), lines = String(text || "").split(/\n/), title = "", i, l;
+    var stamp = findStamp(text), lines = String(text || "").split(/\n/), head = "", i, l;
     for (i = 0; i < lines.length; i++) {
       l = tidy(lines[i]);
       if (!l || /^Doc\s*#/i.test(l)) continue;
-      if (/^[A-Z][A-Z0-9 \-&',.\/]{5,80}$/.test(l) && /[A-Z]{3}/.test(l)) { title = l; break; }
+      if (/^[A-Z][A-Z0-9 \-&',.\/]{5,80}$/.test(l) && /[A-Z]{3}/.test(l)) { head = l; break; }
     }
-    var loan = parseLoanDoc(text);        // assignments, notes, liens and releases carry a type, parties and an amount
-    var typeTitle = loan.subtype ? loan.subtype.charAt(0).toUpperCase() + loan.subtype.slice(1) : "";
-    return { stamp_doc: stamp.doc, stamp_date: stamp.date, title: title || typeTitle, subtype: loan.subtype,
-             assignor: loan.assignor, assignee: loan.assignee, references: loan.references, principal: loan.principal };
+    var t = flat(text), loan = parseLoanDoc(text);
+    return { stamp_doc: stamp.doc, stamp_date: stamp.date, subtype: guessDocName(head ? head + " " + t.slice(0, 400) : t.slice(0, 600)),
+             amount: moneyOf(t), assignor: loan.assignor, assignee: loan.assignee, references: loan.references };
   }
 
   var api = { toIso: toIso, findStamp: findStamp, parseNotice: parseNotice, parseDeedOfTrust: parseDeedOfTrust, parseLoanDoc: parseLoanDoc, parseOtherDoc: parseOtherDoc };
