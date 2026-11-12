@@ -115,7 +115,10 @@
       if (!l || /^Doc\s*#/i.test(l)) continue;
       if (/^[A-Z][A-Z0-9 \-&',.\/]{5,80}$/.test(l) && /[A-Z]{3}/.test(l)) { title = l; break; }
     }
-    return { stamp_doc: stamp.doc, stamp_date: stamp.date, title: title };
+    var loan = parseLoanDoc(text);        // assignments, notes, liens and releases carry a type, parties and an amount
+    var typeTitle = loan.subtype ? loan.subtype.charAt(0).toUpperCase() + loan.subtype.slice(1) : "";
+    return { stamp_doc: stamp.doc, stamp_date: stamp.date, title: title || typeTitle, subtype: loan.subtype,
+             assignor: loan.assignor, assignee: loan.assignee, references: loan.references, principal: loan.principal };
   }
 
   var api = { toIso: toIso, findStamp: findStamp, parseNotice: parseNotice, parseDeedOfTrust: parseDeedOfTrust, parseLoanDoc: parseLoanDoc, parseOtherDoc: parseOtherDoc };
