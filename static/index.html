@@ -294,7 +294,7 @@ const FACT_LABELS = {
   stamp_doc:"Document #", stamp_date:"Recorded", sale_date:"Sale date", deed_instrument:"Deed of Trust #",
   dated:"Dated", borrower:"Grantor(s) / Borrower(s)", lender:"Lender", trustee:"DOT Lender Trustee",
   loan_number:"Loan #", maturity_date:"Loan end date (payoff date)", principal:"Original loan amount",
-  assignor:"Assignor", assignee:"Assignee", references:"Deed of Trust # it refers to", type:"Type"
+  assignor:"Assignor", assignee:"Assignee", references:"Deed of Trust # it refers to", type:"Type", title:"Title"
 };
 function factValue(k, v){
   if(/date$|^dated$/.test(k)) return fmtDeedDate(v) || v;
@@ -311,12 +311,11 @@ function showDocs(id){
   let h = "<h3>Documents</h3><div class=\"sub\">" + escapeAttr(r.full_address || r.address || "") + " &middot; Notice #" + escapeAttr(r.doc_number) + "</div>";
   h += "<h4>Files</h4>" + r.doc_files.map(d => '<div class="docfile"><span><b>' + escapeAttr(d.title || d.label) + "</b>" + (d.subtype ? " (" + escapeAttr(d.subtype) + ")" : "") +
         '</span><a href="' + escapeAttr(d.url) + '" target="_blank" rel="noopener">View PDF</a></div>').join("");
-  if(f.loan_doc_none_found) h += '<div class="docfile"><span><b>Loan document</b>: none found on record</span></div>';
   const dot = factTable(f.deed_of_trust, ["dated","stamp_doc","stamp_date","borrower","lender","trustee","loan_number","maturity_date","principal"]);
   if(dot) h += "<h4>Deed of Trust</h4>" + dot;
   const nt = factTable(f.notice, ["sale_date","stamp_doc","deed_instrument"]);
   if(nt) h += "<h4>Foreclosure notice</h4>" + nt;
-  (f.loan_docs || []).forEach(l => { const t = factTable(l, ["type","assignor","assignee","references","stamp_doc","principal"]); if(t) h += "<h4>Loan document</h4>" + t; });
+  (f.other_docs || []).forEach(o => { const t = factTable(o, ["title","type","assignor","assignee","references","stamp_doc","principal"]); if(t) h += "<h4>Additional document</h4>" + t; });
   h += '<div class="note-small">Details were read from the recorded documents by REIX staff. Always confirm against the PDF.</div>';
   document.getElementById("docsBody").innerHTML = h;
   document.getElementById("docsModal").style.display = "flex";
