@@ -352,7 +352,10 @@ class TaxSite:
             return body
 
     def search(self, criteria):
-        return self._fetch("POST", "showlist.jsp", data={"searchby": "6", "criteria": criteria})
+        # The Tax Office only answers a search that says it came from its own search page (any Referer will do; a
+        # browser always sends one when the form is submitted). Without it the site quietly returns an empty form.
+        return self._fetch("POST", "showlist.jsp", data={"searchby": "6", "criteria": criteria},
+                           headers={"Referer": self.base + "index.jsp"})
 
     def account_page(self, account):
         return self._fetch("GET", "showdetail2.jsp", params={"can": account})
@@ -558,6 +561,8 @@ def run_batch(limit=None, trigger="manual", site=None, max_minutes=None, daily_c
         deadline = time.time() + (max_minutes if max_minutes is not None else _cfg("TAX_MAX_MINUTES", 120, float)) * 60
         st = {"processed": 0, "ok": 0, "ambiguous": 0, "no_match": 0, "errors": 0}
         reason, streak = "done", 0
+        stop_after = _cfg("TAX_NOMATCH_STOP", 10, int)
+        nomatch_ids = []                                   # consecutive searches that found nothing
         for prop in due_properties(conn, limit):
             if time.time() > deadline:
                 reason = "time limit reached"
@@ -571,6 +576,18 @@ def run_batch(limit=None, trigger="manual", site=None, max_minutes=None, daily_c
             st["processed"] += 1
             st[{"ok": "ok", "ambiguous": "ambiguous", "no_match": "no_match"}.get(res["status"], "errors")] += 1
             streak = streak + 1 if res["status"] == "error" else 0
+            if res["status"] in ("ok", "ambiguous"):
+                nomatch_ids = []
+            elif res["status"] == "no_match" and res.get("note") == "no tax account found at this address":
+                nomatch_ids.append(prop["id"])
+            if stop_after and len(nomatch_ids) >= stop_after:
+                # Real addresses do sometimes have no account, but this many in a row means the search itself has
+                # changed. Undo them (so they are tried again later), stop, and pause.
+                conn.execute(f"DELETE FROM property_taxes WHERE status = 'no_match' AND manual = 0 AND property_id IN ({','.join('?' * len(nomatch_ids))})", nomatch_ids)
+                conn.commit()
+                reason = "%d searches in a row found nothing, so the Tax Office's search may have changed" % len(nomatch_ids)
+                pause(conn, 6, reason)
+                break
             conn.execute("UPDATE tax_runs SET heartbeat_at = ?, processed = ?, ok = ?, ambiguous = ?, no_match = ?, errors = ? WHERE id = ?",
                          (_utc(), st["processed"], st["ok"], st["ambiguous"], st["no_match"], st["errors"], run_id))
             conn.commit()
