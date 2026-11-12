@@ -25,7 +25,7 @@ from flask import Blueprint, jsonify, request, send_file
 
 from db import get_conn
 from events import changes_after, parse_key, property_key
-from intake import DOCS_DIR, ROLES, ROLE_LABELS
+from intake import DOCS_DIR, DOC_NAME_LABELS, ROLES, ROLE_LABELS, courthouse_url
 
 sync_bp = Blueprint("sync_api", __name__)
 
@@ -64,6 +64,8 @@ def attach_status(conn, items):
         i["property_key"] = property_key(i["county"], i["type"], i["doc_number"])
         i["docs_status"] = {r: "missing" for r in ROLES}
         i["docs_extra"] = 0                      # optional additional documents on file
+        i["lien_position"] = None                # "first" or "subordinate", from the deed of trust
+        i["back_tax_amount_owed"] = None         # from the back tax report, if there is one
     if ids:
         marks = ",".join("?" * len(ids))
         by_id = {i["id"]: i for i in items}
@@ -78,6 +80,21 @@ def attach_status(conn, items):
                 st[r["doc_role"]] = "done"
             elif r["status"] == "none_found" and st[r["doc_role"]] != "done":
                 st[r["doc_role"]] = "none_found"
+    if ids:
+        marks = ",".join("?" * len(ids))
+        by_id = {i["id"]: i for i in items}
+        for r in conn.execute(f"SELECT property_id, doc_role, doc_subtype, fields_json FROM property_files "
+                              f"WHERE property_id IN ({marks}) AND status = 'uploaded' AND "
+                              f"(doc_role = 'deed_of_trust' OR (doc_role = 'other_doc' AND doc_subtype = 'back_tax_report')) "
+                              f"ORDER BY id", ids).fetchall():
+            try:
+                f = json.loads(r["fields_json"] or "{}")
+            except ValueError:
+                f = {}
+            if r["doc_role"] == "deed_of_trust":
+                by_id[r["property_id"]]["lien_position"] = f.get("lien_position")
+            else:
+                by_id[r["property_id"]]["back_tax_amount_owed"] = f.get("amount")
     for i in items:
         s = i["docs_status"]
         i["docs_complete"] = s["notice"] == "done" and s["deed_of_trust"] == "done"
@@ -139,7 +156,9 @@ def property_documents(key):
             elif status[f["doc_role"]] != "done":
                 status[f["doc_role"]] = "none_found"
         out.append({"file_id": f["id"], "role": f["doc_role"], "role_label": ROLE_LABELS[f["doc_role"]],
-                    "subtype": f["doc_subtype"] or None, "status": f["status"], "doc_number": f["doc_number"] or None,
+                    "subtype": f["doc_subtype"] or None, "document_name": DOC_NAME_LABELS.get(f["doc_subtype"]),
+                    "courthouse_url": courthouse_url(f["doc_role"], f["doc_number"], fields),
+                    "status": f["status"], "doc_number": f["doc_number"] or None,
                     "number_matches_expected": None if f["stamp_matches"] is None else bool(f["stamp_matches"]),
                     "facts": fields, "size_bytes": f["size_bytes"], "sha256": f["sha256"] or None,
                     "note": f["note"] or None, "uploaded_at": f["uploaded_at"],
