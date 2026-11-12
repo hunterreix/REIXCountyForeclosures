@@ -44,6 +44,7 @@
   .badge{display:inline-block;padding:3px 9px;border-radius:999px;font-size:12px;font-weight:700;} .badge.ok{background:#e3f3ec;color:var(--accent);} .badge.bad{background:#fdecea;color:var(--bad);} .badge.unk{background:#fff3e6;color:var(--warn);}
   .bar{height:8px;background:#eceff2;border-radius:6px;overflow:hidden;margin:8px 0;} .bar>div{height:100%;background:var(--accent);width:0;transition:width .2s;}
   iframe.preview{width:100%;height:520px;border:1px solid var(--line);border-radius:10px;background:#fff;}
+  .editbox{background:#f9fafb;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:6px 0 10px;} .editbox .actions{display:flex;gap:8px;margin-top:8px;}
   .file{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px;} .file:last-child{border-bottom:none;}
   .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .2s;z-index:50;} .toast.show{opacity:1;}
 </style>
@@ -89,7 +90,10 @@
 
   <!-- ONE PROPERTY -->
   <div id="propView" class="hidden">
-    <p><button class="link" id="back">&larr; Back to the list</button></p>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:10px 0">
+      <button class="link" id="back">&larr; Back to the list</button>
+      <button class="primary" id="nextBtn" disabled>Next property &rarr;</button>
+    </div>
     <div class="card"><div id="ptitle" style="font-size:18px;font-weight:800"></div><div class="muted" id="psub"></div><div id="pprog" style="margin-top:8px"></div></div>
     <div class="steps" id="steps"></div>
     <div class="grid2">
@@ -109,7 +113,7 @@
 "use strict";
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-let csrf = "", me = null, page = 1, cur = null, picked = null, pickedUrl = null;
+let csrf = "", me = null, page = 1, cur = null, picked = null, pickedUrl = null, lastQuery = null;
 const ROLE_LABEL = {notice:"Foreclosure notice", deed_of_trust:"Deed of Trust", loan_doc:"Loan document", other_doc:"Additional document"};
 const OCR_PAGES = {notice:4, deed_of_trust:2, loan_doc:3, other_doc:2};
 const SUBTYPES = [["assignment","Assignment"],["note","Note"],["lien","Lien"],["release","Release"],["other","Other"]];
@@ -169,6 +173,7 @@ async function loadList(){
   if($("fq").value.trim()) p.set("q",$("fq").value.trim());
   if($("fyear").value) p.set("year",$("fyear").value);
   if($("fmonth").value) p.set("month",$("fmonth").value);
+  lastQuery = new URLSearchParams(p); lastQuery.delete("page");      // so "Next property" follows the same filters
   const j = await api("/intake/api/worklist?"+p);
   const NEXT = {notice:"Upload notice", deed_of_trust:"Find deed of trust", loan_doc:"Find loan doc"};
   $("rows").innerHTML = j.results.length ? '<table><thead><tr><th>Address</th><th>Sale</th><th>Doc #</th><th>Documents</th><th>Progress</th><th>Next step</th><th></th></tr></thead><tbody>' +
@@ -254,7 +259,8 @@ function filesHtml(d){
     const chk = f.stamp_matches===1?'<span class="badge ok">✓ number matches</span>':f.stamp_matches===0?'<span class="badge bad">number mismatch</span>':"";
     if(f.status==="none_found") return '<div class="file"><div><b>'+esc(lab)+'</b>: marked not found<div class="muted">'+esc(f.note||"")+' · '+esc(f.by)+'</div></div><button data-rm="'+f.id+'">Undo</button></div>';
     return '<div class="file"><div><b>'+esc(lab)+'</b> '+(f.doc_number?'#'+esc(f.doc_number):"")+' '+chk+'<div class="muted">'+esc(f.original_name)+' · '+esc(f.by)+' · '+esc((f.uploaded_at||"").slice(0,10))+'</div></div>'+
-      '<div><button data-view="'+f.id+'">View</button> <button data-rm="'+f.id+'">Remove</button></div></div>';
+      '<div><button data-view="'+f.id+'">View</button> <button data-edit="'+f.id+'">Edit details</button> <button data-rm="'+f.id+'">Remove</button></div></div>'+
+      '<div class="editbox hidden" id="edit-'+f.id+'"></div>';
   }).join("");
 }
 
@@ -265,6 +271,10 @@ function renderProperty(d){
   const pr = d.guidance.progress;
   $("pprog").innerHTML = '<div class="prog"><div class="track" style="width:220px"><div style="width:'+pr.percent+'%"></div></div><b>'+pr.percent+'% complete</b> <span class="muted">('+pr.done+' of '+pr.total+' required)'+(d.guidance.extras ? ' + '+d.guidance.extras+' additional' : '')+'</span></div>';
   $("steps").innerHTML = stepsHtml(d.guidance);
+  const ready = d.guidance.steps[0].state === "done" && d.guidance.steps[1].state === "done";   // notice + deed of trust are in
+  $("nextBtn").disabled = !ready;
+  $("nextBtn").title = ready ? "Go to the next property in your list" : "Add the notice and the deed of trust first";
+  $("nextBtn").onclick = goNext;
   $("guide").innerHTML = guideHtml(d.guidance, p);
   $("uploadCard").innerHTML = uploadHtml(d);
   $("files").innerHTML = filesHtml(d);
@@ -275,6 +285,7 @@ function renderProperty(d){
   const nf2 = $("nfBtn2"); if(nf2) nf2.onclick = async ()=>{
     try{ renderProperty(await api("/intake/api/property/"+p.id+"/none-found",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({doc_role:$("upRole").value,note:$("nfNote2").value})})); toast("Saved"); }catch(e){ toast(e.message); } };
   $("files").querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>window.open("/intake/api/file/"+b.dataset.view,"_blank"));
+  $("files").querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>toggleEdit(b.dataset.edit));
   $("files").querySelectorAll("[data-rm]").forEach(b=>b.onclick=async ()=>{ if(!confirm("Remove this? The PDF is kept for the audit trail but is no longer used.")) return;
     try{ renderProperty(await api("/intake/api/file/"+b.dataset.rm+"/remove",{method:"POST"})); toast("Removed"); }catch(e){ toast(e.message); } });
   $("upRole").onchange = syncRole; $("upFile").onchange = onFile; syncRole();
@@ -286,6 +297,39 @@ function syncRole(){
   $("nfLabel").textContent = role==="loan_doc" ? "No loan document on record? Mark it as none found (this counts as complete)." : "Can't find the deed of trust? Mark it as not found.";
   $("nfBtn2").textContent = role==="loan_doc" ? "None found - loan document" : "Not found - deed of trust";
 }
+/* ---------- next property ---------- */
+async function goNext(){
+  const q = new URLSearchParams(lastQuery ? lastQuery.toString() : "");
+  if(!q.get("missing") || q.get("missing")==="any") q.set("missing","minimum");   // default list: go to one that still lacks its notice or deed
+  try{
+    const j = await api("/intake/api/property/"+cur.property.id+"/next?"+q);
+    if(j.next_id){ location.hash = "#p/"+j.next_id; }
+    else { toast("That was the last property in this list"); location.hash = ""; }
+  }catch(e){ toast(e.message); }
+}
+
+/* ---------- see and edit the details read from a saved document ---------- */
+function toggleEdit(id){
+  const box = $("edit-"+id); if(!box) return;
+  if(!box.classList.contains("hidden")){ box.classList.add("hidden"); box.innerHTML = ""; return; }
+  const f = cur.files.find(x=>String(x.id)===String(id)); if(!f) return;
+  let h = '<b>Details read from this document</b> <span class="muted">(the PDF itself is not changed)</span>';
+  if(f.doc_role==="loan_doc") h += '<div class="field"><label>Loan document type</label><select data-ef-sub>'+SUBTYPES.map(x=>'<option value="'+x[0]+'"'+(x[0]===f.doc_subtype?" selected":"")+'>'+x[1]+'</option>').join("")+'</select></div>';
+  h += FIELDS[f.doc_role].map(x=>'<div class="field"><label>'+esc(x[1])+'</label><input data-ef="'+x[0]+'" type="'+(x[2]==="date"?"date":"text")+'" value="'+esc((f.fields||{})[x[0]]||"")+'"></div>').join("");
+  h += '<div class="actions"><button class="primary" data-save-edit="'+id+'">Save changes</button><button data-cancel-edit="'+id+'">Cancel</button></div>';
+  box.innerHTML = h; box.classList.remove("hidden");
+  box.querySelector("[data-save-edit]").onclick = ()=>saveEdit(id);
+  box.querySelector("[data-cancel-edit]").onclick = ()=>toggleEdit(id);
+}
+async function saveEdit(id){
+  const box = $("edit-"+id), f = cur.files.find(x=>String(x.id)===String(id)), fields = {};
+  box.querySelectorAll("[data-ef]").forEach(i=>{ if(i.value.trim()) fields[i.dataset.ef] = i.value.trim(); });
+  if(f.doc_role==="other_doc" && !fields.title){ toast("Give this document a short title first"); return; }
+  const body = {fields}, sub = box.querySelector("[data-ef-sub]"); if(sub) body.doc_subtype = sub.value;
+  try{ renderProperty(await api("/intake/api/file/"+id+"/fields",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})); toast("Details saved"); }
+  catch(e){ toast(e.message); }
+}
+
 function setPreview(file){
   if(pickedUrl){ URL.revokeObjectURL(pickedUrl); pickedUrl=null; }
   const f = $("preview");
