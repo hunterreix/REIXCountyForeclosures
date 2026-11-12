@@ -26,6 +26,7 @@ from flask import Blueprint, jsonify, request, send_file
 from db import get_conn
 from events import changes_after, parse_key, property_key
 from intake import DOCS_DIR, DOC_NAME_LABELS, ROLES, ROLE_LABELS, courthouse_url
+from taxes import EMPTY_TAX_FIELDS, api_fields_map
 
 sync_bp = Blueprint("sync_api", __name__)
 
@@ -64,6 +65,7 @@ def attach_status(conn, items):
         i["property_key"] = property_key(i["county"], i["type"], i["doc_number"])
         i["docs_status"] = {r: "missing" for r in ROLES}
         i["docs_extra"] = 0                      # optional additional documents on file
+        i["docs_tax"] = 0                        # optional tax documents on file (back tax report, tax liens)
         i["lien_position"] = None                # "first" or "subordinate", from the deed of trust
         i["back_tax_amount_owed"] = None         # from the back tax report, if there is one
     if ids:
@@ -73,7 +75,7 @@ def attach_status(conn, items):
                               f"WHERE property_id IN ({marks}) AND status != 'removed'", ids).fetchall():
             if r["doc_role"] not in ROLES:       # additional documents are counted, not part of the status
                 if r["status"] == "uploaded":
-                    by_id[r["property_id"]]["docs_extra"] += 1
+                    by_id[r["property_id"]]["docs_tax" if r["doc_role"] == "tax_doc" else "docs_extra"] += 1
                 continue
             st = by_id[r["property_id"]]["docs_status"]
             if r["status"] == "uploaded":
@@ -85,7 +87,7 @@ def attach_status(conn, items):
         by_id = {i["id"]: i for i in items}
         for r in conn.execute(f"SELECT property_id, doc_role, doc_subtype, fields_json FROM property_files "
                               f"WHERE property_id IN ({marks}) AND status = 'uploaded' AND "
-                              f"(doc_role = 'deed_of_trust' OR (doc_role = 'other_doc' AND doc_subtype = 'back_tax_report')) "
+                              f"(doc_role = 'deed_of_trust' OR (doc_role = 'tax_doc' AND doc_subtype = 'back_tax_report')) "
                               f"ORDER BY id", ids).fetchall():
             try:
                 f = json.loads(r["fields_json"] or "{}")
@@ -95,7 +97,9 @@ def attach_status(conn, items):
                 by_id[r["property_id"]]["lien_position"] = f.get("lien_position")
             else:
                 by_id[r["property_id"]]["back_tax_amount_owed"] = f.get("amount")
+    taxes = api_fields_map(conn, ids)                  # annual tax, back taxes, total due (see taxes.py)
     for i in items:
+        i.update(taxes.get(i["id"]) or EMPTY_TAX_FIELDS)
         s = i["docs_status"]
         i["docs_complete"] = s["notice"] == "done" and s["deed_of_trust"] == "done"
     return items

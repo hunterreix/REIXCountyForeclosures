@@ -46,8 +46,9 @@ DOCS_DIR = os.environ.get("REIX_DOCS_DIR", os.path.join(os.path.dirname(os.path.
 MAX_PDF_BYTES = 25 * 1024 * 1024
 ROLES = ("notice", "deed_of_trust")   # the required documents
 ROLE_LABELS = {"notice": "Foreclosure notice", "deed_of_trust": "Deed of Trust", "loan_doc": "Loan document",
-               "other_doc": "Additional document"}
+               "other_doc": "Additional document", "tax_doc": "Tax document"}
 EXTRA_ROLE = "other_doc"   # optional extra documents: any number, never required for completion
+TAX_ROLE = "tax_doc"       # optional tax documents (a back tax report, tax liens): their own category, never required
 # Additional documents are chosen from this list (the "document name"). The old free-form types are still
 # accepted on documents that already have one, so existing data keeps working until someone edits it.
 DOC_NAMES = (("additional_deed_of_trust", "Additional Deed of Trust"), ("modification", "Modification"),
@@ -56,6 +57,8 @@ DOC_NAMES = (("additional_deed_of_trust", "Additional Deed of Trust"), ("modific
              ("city_lien", "City Lien"), ("back_tax_report", "Back Tax Report"), ("irs_lien", "IRS Lien"),
              ("federal_tax_lien", "Federal Tax Lien"))
 DOC_NAME_LABELS = dict(DOC_NAMES)
+TAX_NAME_CODES = ("back_tax_report", "tax_lien", "irs_lien", "federal_tax_lien")        # these live in the Tax documents category
+EXTRA_NAME_CODES = tuple(c for c, _ in DOC_NAMES if c not in TAX_NAME_CODES)             # the rest stay in Additional documents
 LEGACY_SUBTYPES = ("assignment", "note", "lien", "release", "other")
 SUBTYPES = tuple(c for c, _ in DOC_NAMES) + LEGACY_SUBTYPES
 LIEN_POSITIONS = {"first": "1st lien", "subordinate": "Subordinate lien"}   # for the deed of trust
@@ -77,6 +80,8 @@ FIELD_RULES = {
                       "principal": "text", "lien_position": "lien", "clerk_url": "url"},   # trustee = "DOT Lender Trustee"; maturity_date = loan end / payoff date
     "other_doc": {"stamp_doc": "num", "stamp_date": "date", "title": "text", "assignor": "text", "assignee": "text",
                   "references": "num", "principal": "text", "amount": "money", "clerk_url": "url", "notes": "text"},
+    "tax_doc": {"stamp_doc": "num", "stamp_date": "date", "title": "text", "assignor": "text", "amount": "money",
+                "clerk_url": "url", "notes": "text"},
 }
 
 SCHEMA = """
@@ -176,6 +181,7 @@ def init_intake(app):
     ensure_events(conn)
     _backfill_sale_dates(conn)
     _migrate_loan_docs(conn)
+    _migrate_tax_docs(conn)
     conn.commit()
     conn.close()
     app.before_request(_gate_public)
@@ -428,6 +434,17 @@ def _migrate_loan_docs(conn):
             log_event(conn, r["property_id"], "document_updated", r["id"], "other_doc")
 
 
+def _migrate_tax_docs(conn):
+    """Tax documents became their own category: a back tax report or tax lien saved as an additional document moves
+    over (its details are kept as they are). Idempotent."""
+    marks = ",".join("?" * len(TAX_NAME_CODES))
+    for r in conn.execute(f"SELECT id, property_id FROM property_files WHERE doc_role = 'other_doc' AND doc_subtype IN ({marks})",
+                          TAX_NAME_CODES).fetchall():
+        cur = conn.execute("UPDATE property_files SET doc_role = 'tax_doc' WHERE id = ? AND doc_role = 'other_doc'", (r["id"],))
+        if cur.rowcount == 1:
+            log_event(conn, r["property_id"], "document_updated", r["id"], "tax_doc")
+
+
 def build_guidance(prop, files):
     """Which document is next, and exactly what to look for."""
     states = {r: _role_state(files, r) for r in ROLES}
@@ -435,8 +452,10 @@ def build_guidance(prop, files):
     extras = [f for f in files if f["doc_role"] == EXTRA_ROLE and f["status"] == "uploaded"]
     steps = [{"role": r, "label": ROLE_LABELS[r], "state": states[r]} for r in ROLES]
     steps.append({"role": EXTRA_ROLE, "label": "Additional documents", "state": "optional", "count": len(extras)})
+    taxdocs = [f for f in files if f["doc_role"] == TAX_ROLE and f["status"] == "uploaded"]
+    steps.append({"role": TAX_ROLE, "label": "Tax documents", "state": "optional", "count": len(taxdocs)})
     resolved = sum([states["notice"] == "done", states["deed_of_trust"] == "done"])
-    g = {"steps": steps, "current": current, "extras": len(extras), "complete": _complete(files),
+    g = {"steps": steps, "current": current, "extras": len(extras), "tax_docs": len(taxdocs), "complete": _complete(files),
          "progress": {"done": resolved, "total": len(ROLES), "percent": round(100 * resolved / len(ROLES))}}
     nf = _latest_fields(files, "notice")
     df = _latest_fields(files, "deed_of_trust")
@@ -461,7 +480,7 @@ def build_guidance(prop, files):
     elif g["complete"]:
         g.update(title="All required documents are in", lookup={},
                  instructions=["Everything required (the notice and the deed of trust) is on file. Add any other documents you find "
-                               "(assignments, notes, liens, releases, HOA or tax papers, title work...) as an 'Additional document'."])
+                               "(modifications, liens, judgments, affidavits...) as an 'Additional document', and a back tax report or tax lien as a 'Tax document'."])
     else:
         g.update(title="The deed of trust was marked not found", lookup={},
                  instructions=["The notice and deed of trust are needed to complete a property. Re-check the Clerk's site, "
@@ -624,8 +643,8 @@ def _validate_document(role, subtype, fields, notice_number):
             return "choose the lien position: 1st lien or Subordinate lien"
         if not fields.get("stamp_doc"):
             return "enter the deed of trust's document number (the number stamped on it)"
-    elif role == EXTRA_ROLE:
-        if subtype not in DOC_NAME_LABELS:
+    elif role in (EXTRA_ROLE, TAX_ROLE):
+        if subtype not in (TAX_NAME_CODES if role == TAX_ROLE else EXTRA_NAME_CODES):
             return "choose the document name from the list"
         fields["title"] = DOC_NAME_LABELS[subtype]
         if subtype == "back_tax_report":                      # no document number: the amount owed is the data point
@@ -640,9 +659,9 @@ def _validate_document(role, subtype, fields, notice_number):
 @require_intake
 def upload(pid):
     role = request.form.get("doc_role", "")
-    if role not in ROLES + (EXTRA_ROLE,):
+    if role not in ROLES + (EXTRA_ROLE, TAX_ROLE):
         return jsonify({"error": "unknown document type"}), 400
-    subtype = request.form.get("doc_subtype", "") if role == EXTRA_ROLE else ""      # an additional document's type is optional
+    subtype = request.form.get("doc_subtype", "") if role in (EXTRA_ROLE, TAX_ROLE) else ""      # an additional document's type is optional
     if subtype and subtype not in SUBTYPES:
         return jsonify({"error": "unknown document type"}), 400
     f = request.files.get("file")
@@ -788,6 +807,7 @@ FACT_KEYS = {
     "deed_of_trust": ("stamp_doc", "stamp_date", "dated", "borrower", "lender", "trustee",
                       "loan_number", "maturity_date", "principal", "lien_position"),
     "other_doc": ("stamp_doc", "stamp_date", "title", "assignor", "assignee", "references", "principal", "amount"),
+    "tax_doc": ("stamp_doc", "stamp_date", "title", "assignor", "amount"),
 }
 
 
@@ -806,7 +826,7 @@ def attach_viewer_docs(conn, items):
     for i in items:
         if i["id"] not in ids:
             continue
-        facts = {"notice": {}, "deed_of_trust": {}, "other_docs": []}
+        facts = {"notice": {}, "deed_of_trust": {}, "other_docs": [], "tax_docs": []}
         for f in files_by.get(i["id"], []):
             if f["status"] != "uploaded":
                 continue
@@ -820,6 +840,9 @@ def attach_viewer_docs(conn, items):
             if f["doc_role"] == EXTRA_ROLE:
                 picked["type"] = f["doc_subtype"] or ""
                 facts["other_docs"].append(picked)
+            elif f["doc_role"] == TAX_ROLE:
+                picked["type"] = f["doc_subtype"] or ""
+                facts["tax_docs"].append(picked)
             else:
                 facts[f["doc_role"]] = picked
         i["doc_facts"] = facts
@@ -898,7 +921,7 @@ def update_fields(fid):
     pid, role = row["property_id"], row["doc_role"]
     fields = _clean_fields(role, b.get("fields"))
     subtype = row["doc_subtype"]
-    if role == EXTRA_ROLE:                     # an additional document's type is optional
+    if role in (EXTRA_ROLE, TAX_ROLE):         # an extra document's name must come from its list
         subtype = str(b.get("doc_subtype", subtype) or "")
         if subtype and subtype not in SUBTYPES:
             conn.close()
@@ -907,7 +930,7 @@ def update_fields(fid):
     if err:
         conn.close()
         return jsonify({"error": err}), 400
-    if role == EXTRA_ROLE:                     # keep an old free-form title as a note rather than losing it
+    if role in (EXTRA_ROLE, TAX_ROLE):         # keep an old free-form title as a note rather than losing it
         try:
             old_title = (json.loads(row["fields_json"] or "{}").get("title") or "").strip()
         except ValueError:

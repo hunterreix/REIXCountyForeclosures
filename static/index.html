@@ -58,6 +58,7 @@
   a.chip{font-size:11px;font-weight:600;color:var(--accent);background:#eef4f2;border-radius:999px;padding:2px 8px;text-decoration:none;white-space:nowrap;}
   a.chip:hover{background:#dcebe6;}
   .transfer{font-size:11px;color:var(--sub);margin-top:2px;}
+  .taxline{font-size:11px;margin-top:2px;} .taxline a{color:var(--sub);text-decoration:none;border-bottom:1px dotted var(--sub);} .taxline.owed a{color:#b42318;border-bottom-color:#b42318;}
   .transfer a{color:var(--sub);text-decoration:none;border-bottom:1px dotted var(--sub);}
   .view-btn{background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:700;text-decoration:none;white-space:nowrap;}
 
@@ -317,6 +318,16 @@ function showDocs(id){
   const nt = factTable(f.notice, ["sale_date","stamp_doc","deed_instrument"]);
   if(nt) h += "<h4>Foreclosure notice</h4>" + nt;
   (f.other_docs || []).forEach(o => { const t = factTable(o, ["title","stamp_doc","stamp_date","amount","assignor","assignee","references","principal"]); if(t) h += "<h4>Additional document</h4>" + t; });
+  (f.tax_docs || []).forEach(o => { const t = factTable(o, ["title","stamp_doc","stamp_date","amount","assignor"]); if(t) h += "<h4>Tax document</h4>" + t; });
+  if(r.tax_status === "ok" && r.taxes_total_due != null){
+    h += '<h4>Property taxes</h4><table class="facts">'
+      + '<tr><td>Annual tax (' + escapeAttr(r.taxes_year || "") + ')</td><td>' + fmtMoney(r.taxes_annual) + '</td></tr>'
+      + '<tr><td>Back taxes owed</td><td>' + fmtMoney(r.taxes_back_owed) + '</td></tr>'
+      + '<tr><td>Total due</td><td>' + fmtMoney(r.taxes_total_due) + '</td></tr>'
+      + (r.taxes_delinquent_after ? '<tr><td>Delinquent after</td><td>' + escapeAttr(r.taxes_delinquent_after) + '</td></tr>' : '')
+      + '<tr><td>Account</td><td><a href="' + escapeAttr(r.tax_link) + '" target="_blank" rel="noopener">' + escapeAttr(r.tax_account) + ' &#8599;</a></td></tr></table>'
+      + '<div class="note-small">From the Tax Assessor-Collector' + (r.taxes_as_of ? ', as of ' + escapeAttr(r.taxes_as_of) : '') + '. Amounts include penalty and interest and change over time.</div>';
+  }
   h += '<div class="note-small">Details were read from the recorded documents by REIX staff. Always confirm against the PDF.</div>';
   document.getElementById("docsBody").innerHTML = h;
   document.getElementById("docsModal").style.display = "flex";
@@ -453,6 +464,16 @@ function transferLine(r){
   return `<div class="transfer">${inner}</div>`;
 }
 
+// Small line under the address: back taxes and this year's tax, from the Tax Assessor-Collector (links to the account page)
+function fmtMoney(n){ return "$" + Number(n).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+function taxLine(r){
+  if(r.tax_status !== "ok" || r.taxes_total_due == null) return "";
+  const owed = r.taxes_back_owed > 0;
+  const label = (owed ? "Back taxes " + fmtMoney(r.taxes_back_owed) : "No back taxes") + " &middot; " + (r.taxes_year || "") + " tax " + fmtMoney(r.taxes_annual);
+  const tip = "Total due " + fmtMoney(r.taxes_total_due) + (r.taxes_as_of ? " as of " + r.taxes_as_of : "") + ". Click to open the account at the Tax Office";
+  return `<div class="taxline${owed ? " owed" : ""}"><a href="${escapeAttr(r.tax_link)}" target="_blank" rel="noopener" title="${escapeAttr(tip)}">${label}</a></div>`;
+}
+
 function renderRows(rows){
   const container = document.getElementById("listContainer");
   if(!rows.length){
@@ -470,7 +491,7 @@ function renderRows(rows){
     html += `<tr>
       <td>${r.county || "--"}</td>
       <td><span class="pill ${r.type}">${r.type}</span></td>
-      <td>${r.address || "--"}${transferLine(r)}</td>
+      <td>${r.address || "--"}${transferLine(r)}${taxLine(r)}</td>
       <td>${r.city || "--"}</td>
       <td>${r.zip || "--"}</td>
       <td>${docCell(r)}</td>

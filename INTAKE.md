@@ -4,8 +4,13 @@ A person opens each notice's documents on the County Clerk's site, downloads the
 uploads it here. The tool reads the PDF **in the person's browser**, shows what it found for
 them to confirm, stores the PDF with the property, and tells them which document to find next:
 
-    1. Foreclosure notice  ->  2. Deed of Trust (named in the notice)  ->  3. Loan document
-       (assignment, note, lien or release; or "none found")
+    1. Foreclosure notice  ->  2. Deed of Trust (named in the notice)          <- the two REQUIRED documents
+    Additional documents: assignments, notes, liens, releases, HOA or tax papers, title work...
+       (optional: any number, each with a short title and an optional type; never required)
+
+Each kind of document has its own table on the property page with its own button, and the steps bar is
+clickable, so any of them can be filled in at any time (for example, an additional document can be added
+before the notice or deed is in).
 
 Open it at `/intake` (e.g. https://reix-foreclosures-phk9.onrender.com/intake).
 
@@ -61,9 +66,36 @@ Sessions are signed with a key derived from `REIX_SYNC_SECRET`, so no new settin
 ## Known limits
 - Reading scanned documents (OCR) is slow (a few seconds per page) and imperfect. Treat every
   filled-in value as a suggestion. PDFs that already contain text are read instantly.
-- Only the first few pages are read (notice 4, deed of trust 2, loan document 3).
+- Only the first few pages are read (notice 4, deed of trust 2, additional documents 2).
 - The REIX app receives documents and facts through the API, not through this page: see `REIX_SYNC.md`.
 
 ## Files
 `intake.py` (sign-in, roles, intake server), `events.py` (change log), `sync_api.py` (REIX app interface), `static/intake.html` (page), `static/intake_parse.js` (reads OCR text),
 three lines in `app.py` that switch it on, `.gitignore`, `tools/test_intake_parse.js` (parser tests).
+
+## What every document needs before it can be saved
+
+| Document | Required | Also collected |
+|---|---|---|
+| Foreclosure notice | (its own number is filled in) | sale date, Deed of Trust number, borrower, lender, courthouse page address |
+| Deed of Trust | **Lien position (1st lien or Subordinate lien)**, **document number** | grantor, lender, trustee, loan #, loan end date, amount, courthouse page address |
+| Additional document | **Document name** (pick from the list), **document number** | recorded date, amount, courthouse page address, parties, notes |
+| Tax document | **Document name** (Back Tax Report, Tax Lien, IRS Lien or Federal Tax Lien), **document number** | recorded date, amount, taxing authority, courthouse page address, notes |
+| Tax document: Back Tax Report | **Document name**, **amount owed** (no document number needed) | notes |
+
+**The four categories on every property page:** 1. Foreclosure notice, 2. Deed of Trust, 3. Additional documents,
+4. Tax documents. The first two are required; the last two are optional and can be filled in at any time.
+
+**Additional document names:** Additional Deed of Trust, Modification, Lis Pendens, Judgment, Other Lien, Affidavit, Notice,
+City Lien. For a Modification only the most recent one is needed: saving a newer one offers to replace the one on file.
+
+**Tax document names:** Back Tax Report, Tax Lien, IRS Lien, Federal Tax Lien. The **Property taxes** card (annual tax, back
+taxes, total due, read from the Tax Assessor-Collector) sits inside the Tax documents table. If you upload a document that looks
+like the other kind, the form switches category for you.
+
+**Courthouse page address (recommended on every document):** open the document on the Clerk's site, copy the address from your
+browser (it looks like `bexar.tx.publicsearch.us/doc/123456789`) and paste it into the form. Everyone who can see the document
+then gets a "Courthouse record" link straight back to it. The notice's link is built automatically.
+
+Documents saved before these rules still open and still count; they show a warning badge ("lien position missing",
+"document # missing", "choose a document name") and are fixed with **Edit details**.

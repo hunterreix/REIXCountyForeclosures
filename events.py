@@ -54,8 +54,9 @@ def parse_key(key):
 
 
 def _detail(r):
-    """sale_date_set events say which monthly list the notice is now in (and which it came from)."""
-    if r["event_type"] != "sale_date_set":
+    """sale_date_set events say which monthly list the notice is now in (and which it came from);
+    taxes_updated events carry the new tax figures."""
+    if r["event_type"] not in ("sale_date_set", "taxes_updated"):
         return None
     try:
         return json.loads(r["detail"])

@@ -45,6 +45,8 @@
   .bar{height:8px;background:#eceff2;border-radius:6px;overflow:hidden;margin:8px 0;} .bar>div{height:100%;background:var(--accent);width:0;transition:width .2s;}
   iframe.preview{width:100%;height:520px;border:1px solid var(--line);border-radius:10px;background:#fff;}
   .editbox{background:#f9fafb;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:6px 0 10px;} .editbox .actions{display:flex;gap:8px;margin-top:8px;}
+  .taxrow{display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid var(--line);} .taxrow:last-of-type{border-bottom:0;} .taxrow b.owed{color:#b42318;}
+  .taxwarn{background:#fff3e6;color:var(--warn);border-radius:8px;padding:6px 10px;margin:6px 0;font-size:13px;}
   .docsec{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:10px 0;} .docsec .sechead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:4px;}
   .step{cursor:pointer;} .step:hover{box-shadow:0 0 0 2px #1b1f2418;} .flash{box-shadow:0 0 0 3px rgba(15,110,92,.35);transition:box-shadow .3s;}
   .file{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px;} .file:last-child{border-bottom:none;}
@@ -116,17 +118,21 @@
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 let csrf = "", me = null, page = 1, cur = null, picked = null, pickedUrl = null, lastQuery = null;
-const ROLE_LABEL = {notice:"Foreclosure notice", deed_of_trust:"Deed of Trust", other_doc:"Additional document"};
-const OCR_PAGES = {notice:4, deed_of_trust:2, other_doc:2};
+const ROLE_LABEL = {notice:"Foreclosure notice", deed_of_trust:"Deed of Trust", other_doc:"Additional document", tax_doc:"Tax document"};
+const OCR_PAGES = {notice:4, deed_of_trust:2, other_doc:2, tax_doc:2};
 const DOC_NAMES = [["additional_deed_of_trust","Additional Deed of Trust"],["modification","Modification"],["lis_pendens","Lis Pendens"],["judgment","Judgment"],["tax_lien","Tax Lien"],["other_lien","Other Lien"],["affidavit","Affidavit"],["notice","Notice"],["city_lien","City Lien"],["back_tax_report","Back Tax Report"],["irs_lien","IRS Lien"],["federal_tax_lien","Federal Tax Lien"]];
 const DOC_NAME = Object.fromEntries(DOC_NAMES);
+const TAX_NAMES = ["back_tax_report","tax_lien","irs_lien","federal_tax_lien"];                       // these belong to the Tax documents category
+const isExtra = role => role==="other_doc" || role==="tax_doc";                                       // the two optional categories
+const NAMES_FOR = role => DOC_NAMES.filter(n => (role==="tax_doc") === TAX_NAMES.includes(n[0]));     // the names offered for each
 const LEGACY_NAME = {assignment:"Assignment", note:"Note", lien:"Lien", release:"Release", other:"Other"};   // older documents: still shown and editable
 const LIEN_OPTS = [["first","1st lien"],["subordinate","Subordinate lien"]];
 const CLERK_URL = ["clerk_url","Courthouse page address: paste it from your browser (gives everyone a direct link)","url"];
 const FIELDS = {
   notice:[["stamp_doc","Document # stamped on the notice","num"],["stamp_date","Recorded date (stamp)","date"],["deed_instrument","Deed of Trust document #","num"],["deed_recorded","Deed of Trust recorded on","date"],["deed_dated","Deed of Trust dated","date"],["borrower","Borrower","text"],["lender","Lender / beneficiary","text"],["principal","Original loan amount","text"],["sale_date","Sale date","date"],CLERK_URL],
   deed_of_trust:[["lien_position","Lien position (required)","choice",LIEN_OPTS],["stamp_doc","Document # stamped on the deed (required)","num"],["stamp_date","Recorded date (stamp)","date"],["dated","Dated","date"],["borrower","Grantor(s) / Borrower(s)","text"],["lender","Lender (beneficiary)","text"],["trustee","DOT Lender Trustee","text"],["loan_number","Loan #","text"],["maturity_date","Loan end date (payoff date)","date"],["principal","Original loan amount","text"],CLERK_URL],
-  other_doc:[["stamp_doc","Document # stamped on the document (required, except for a Back Tax Report)","num"],["stamp_date","Recorded date (stamp)","date"],["amount","Amount owed / amount of the lien or judgment (required for a Back Tax Report)","money"],CLERK_URL,["assignor","From / lienholder / lender (if any)","text"],["assignee","To / borrower (if any)","text"],["references","Deed of Trust # it refers to (if any)","num"],["notes","Notes (internal, not shown to users)","text"]]
+  other_doc:[["stamp_doc","Document # stamped on the document (required, except for a Back Tax Report)","num"],["stamp_date","Recorded date (stamp)","date"],["amount","Amount owed / amount of the lien or judgment (required for a Back Tax Report)","money"],CLERK_URL,["assignor","From / lienholder / lender (if any)","text"],["assignee","To / borrower (if any)","text"],["references","Deed of Trust # it refers to (if any)","num"],["notes","Notes (internal, not shown to users)","text"]],
+  tax_doc:[["stamp_doc","Document # stamped on the document (required, except for a Back Tax Report)","num"],["stamp_date","Recorded date (stamp)","date"],["amount","Amount owed / amount of the lien (required for a Back Tax Report)","money"],CLERK_URL,["assignor","Taxing authority / lienholder (if any)","text"],["notes","Notes (internal, not shown to users)","text"]]
 };
 
 function toast(m){ const t=$("toast"); t.textContent=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2400); }
@@ -215,7 +221,7 @@ function guideHtml(g, prop){
     if(L.loan_number) h += '<div>Loan #: <b>'+esc(L.loan_number)+'</b></div>';
     if(L.open_url) h += '<div style="margin-top:8px"><a class="btn primary" href="'+esc(L.open_url)+'" target="_blank" rel="noopener">Open the Clerk\'s site</a></div>';
     h += '</div>';
-    h += '<div class="muted" style="margin-top:8px">Have another document in hand first? Click <b>Additional documents</b> above, or use <b>+ Add</b> under Documents on file. You can add documents in any order.</div>';
+    h += '<div class="muted" style="margin-top:8px">Have another document in hand first? Click <b>Additional documents</b> or <b>Tax documents</b> above, or use <b>+ Add</b> under Documents on file. You can add documents in any order.</div>';
     if(g.current!=="notice") h += '<div class="field"><label>If you can\'t find it (add a note)</label><input id="nfNote" placeholder="e.g. searched by borrower name, nothing recorded"><div style="margin-top:6px"><button id="nfBtn">'+"Not found"+'</button></div></div>';
   } else h += '<div class="muted">'+(g.complete ? 'This property has everything required (100%). Found other documents for it, such as liens, HOA or tax papers? Add each one under <b>Upload a document</b> &rarr; <b>Additional document</b>.' : 'See the steps above.')+'</div>';
   return h;
@@ -231,7 +237,7 @@ function uploadHtml(d){
   const cur_ = d.guidance.current || "other_doc";
   return '<h3>Upload a document</h3><div class="field"><label>Document type</label><select id="upRole">'+
     Object.keys(ROLE_LABEL).map(r=>'<option value="'+r+'"'+(r===cur_?" selected":"")+'>'+ROLE_LABEL[r]+'</option>').join("")+'</select></div>'+
-    '<div class="field hidden" id="subWrap"><label>Document name (required)</label><select id="upSub"><option value="">Choose…</option>'+DOC_NAMES.map(s=>'<option value="'+s[0]+'">'+s[1]+'</option>').join("")+'</select><div class="muted" id="subHint" style="margin-top:4px"></div></div>'+
+    '<div class="field hidden" id="subWrap"><label>Document name (required)</label><select id="upSub"><option value="">Choose…</option></select><div class="muted" id="subHint" style="margin-top:4px"></div></div>'+
     '<div class="field hidden" id="nfBlock"><label id="nfLabel"></label><input id="nfNote2" placeholder="Note (optional): e.g. searched by borrower name, nothing recorded"><div style="margin-top:6px"><button id="nfBtn2"></button></div></div>'+
     '<div class="drop"><input type="file" id="upFile" accept="application/pdf,.pdf"><div style="margin-top:6px">PDF only, up to 25 MB. It is read on your computer; nothing is sent until you press Save.</div></div>'+
     '<div id="ocrBox" class="hidden"><div class="muted" id="ocrMsg"></div><div class="bar"><div id="ocrBar"></div></div></div>'+
@@ -246,7 +252,7 @@ function inputHtml(x, val, attr, cls){
 // what must be filled in before a document can be saved
 function missingDetails(role, sub, fields){
   if(role==="deed_of_trust"){ if(!fields.lien_position) return "Choose the lien position: 1st lien or Subordinate lien"; if(!fields.stamp_doc) return "Enter the deed of trust's document number"; }
-  if(role==="other_doc"){
+  if(isExtra(role)){
     if(!sub) return "Choose the document name";
     if(sub==="back_tax_report"){ if(!fields.amount) return "Enter the amount owed from the back tax report"; }
     else if(!fields.stamp_doc) return "Enter the document number";
@@ -273,14 +279,14 @@ function stampBadge(expected){
 
 function fileRow(f){
   const fl = f.fields || {};
-  const name = f.doc_role==="other_doc" ? (DOC_NAME[f.doc_subtype] || (LEGACY_NAME[f.doc_subtype] ? LEGACY_NAME[f.doc_subtype]+" (older type)" : fl.title) || "Untitled") : ROLE_LABEL[f.doc_role];
+  const name = isExtra(f.doc_role) ? (DOC_NAME[f.doc_subtype] || (LEGACY_NAME[f.doc_subtype] ? LEGACY_NAME[f.doc_subtype]+" (older type)" : fl.title) || "Untitled") : ROLE_LABEL[f.doc_role];
   const chk = f.stamp_matches===1?'<span class="badge ok">✓ number matches</span>':f.stamp_matches===0?'<span class="badge bad">number mismatch</span>':"";
   if(f.status==="none_found") return '<div class="file"><div><b>'+esc(ROLE_LABEL[f.doc_role])+'</b>: marked not found<div class="muted">'+esc(f.note||"")+' · '+esc(f.by)+'</div></div><button data-rm="'+f.id+'">Undo</button></div>';
-  const backTax = f.doc_role==="other_doc" && f.doc_subtype==="back_tax_report";
+  const backTax = f.doc_subtype==="back_tax_report";
   const tags = (f.doc_role==="deed_of_trust" ? (fl.lien_position ? '<span class="badge ok">'+(fl.lien_position==="first" ? "1st lien" : "Subordinate lien")+'</span>' : '<span class="badge unk">⚠ lien position missing</span>') : "")
     + (backTax ? (fl.amount ? '<span class="badge ok">owed $'+esc(fl.amount)+'</span>' : '<span class="badge unk">⚠ amount owed missing</span>') : "")
     + (f.doc_role!=="notice" && !f.doc_number && !backTax ? '<span class="badge unk">⚠ document # missing</span>' : "")
-    + (f.doc_role==="other_doc" && !DOC_NAME[f.doc_subtype] ? '<span class="badge unk">⚠ choose a document name</span>' : "");
+    + (isExtra(f.doc_role) && !DOC_NAME[f.doc_subtype] ? '<span class="badge unk">⚠ choose a document name</span>' : "");
   const link = f.courthouse_url ? ' <a href="'+esc(f.courthouse_url)+'" target="_blank" rel="noopener">Courthouse record &#8599;</a>' : "";
   return '<div class="file"><div><b>'+esc(name)+'</b> '+(f.doc_number?'#'+esc(f.doc_number):"")+' '+chk+' '+tags+link+'<div class="muted">'+esc(f.original_name)+' · '+esc(f.by)+' · '+esc((f.uploaded_at||"").slice(0,10))+'</div></div>'+
     '<div><button data-view="'+f.id+'">View</button> <button data-edit="'+f.id+'">Edit details</button> <button data-rm="'+f.id+'">Remove</button></div></div>'+
@@ -289,14 +295,15 @@ function fileRow(f){
 // one table per kind of document; each has its own button, so any of them can be filled in at any time
 function filesHtml(d){
   const fs = d.files.filter(f=>f.status!=="removed");
-  const sec = (role, title, hint) => {
+  const sec = (role, title, hint, top) => {
     const mine = fs.filter(f=>f.doc_role===role), have = mine.some(f=>f.status==="uploaded");
-    const btn = '<button class="primary" data-add="'+role+'">'+(role==="other_doc" ? "+ Add" : have ? "Replace" : "Upload")+'</button>';
-    return '<div class="docsec" id="sec-'+role+'"><div class="sechead"><div><b>'+esc(title)+'</b> <span class="muted">'+esc(hint)+'</span></div>'+btn+'</div>'+
-      (mine.length ? mine.map(fileRow).join("") : '<div class="muted" style="padding:6px 0">'+(role==="other_doc" ? "Nothing added yet." : "Not uploaded yet.")+'</div>')+'</div>';
+    const btn = '<button class="primary" data-add="'+role+'">'+(isExtra(role) ? "+ Add" : have ? "Replace" : "Upload")+'</button>';
+    return '<div class="docsec" id="sec-'+role+'"><div class="sechead"><div><b>'+esc(title)+'</b> <span class="muted">'+esc(hint)+'</span></div>'+btn+'</div>'+(top||"")+
+      (mine.length ? mine.map(fileRow).join("") : '<div class="muted" style="padding:6px 0">'+(isExtra(role) ? "Nothing added yet." : "Not uploaded yet.")+'</div>')+'</div>';
   };
   return sec("notice","1. Foreclosure notice","required") + sec("deed_of_trust","2. Deed of Trust","required") +
-         sec("other_doc","Additional documents","optional: assignments, notes, liens, releases, HOA or tax papers, title work...");
+         sec("other_doc","3. Additional documents","optional: modifications, liens, judgments, affidavits, additional deeds of trust...") +
+         sec("tax_doc","4. Tax documents","optional: a back tax report or tax lien. The property's tax figures are kept here too.", '<div id="taxCard"></div>');
 }
 
 function renderProperty(d){
@@ -326,10 +333,19 @@ function renderProperty(d){
   $("files").querySelectorAll("[data-rm]").forEach(b=>b.onclick=async ()=>{ if(!confirm("Remove this? The PDF is kept for the audit trail but is no longer used.")) return;
     try{ renderProperty(await api("/intake/api/file/"+b.dataset.rm+"/remove",{method:"POST"})); toast("Removed"); }catch(e){ toast(e.message); } });
   $("upRole").onchange = syncRole; $("upSub").onchange = syncRole; $("upFile").onchange = onFile; syncRole();
+  loadTaxes();
+}
+// the names offered depend on the category: tax documents have their own list
+function fillNames(role){
+  const sel = $("upSub"); if(sel.dataset.role === role) return;
+  const keep = sel.value; sel.dataset.role = role;
+  sel.innerHTML = '<option value="">Choose…</option>' + NAMES_FOR(role).map(x=>'<option value="'+x[0]+'">'+x[1]+'</option>').join("");
+  if(NAMES_FOR(role).some(x=>x[0]===keep)) sel.value = keep;
 }
 function syncRole(){
   const role = $("upRole").value;
-  $("subWrap").classList.toggle("hidden", role!=="other_doc");              // an additional document can be typed (optional)
+  $("subWrap").classList.toggle("hidden", !isExtra(role));                   // additional and tax documents are named from a list
+  if(isExtra(role)) fillNames(role);
   $("nfBlock").classList.toggle("hidden", role!=="deed_of_trust");           // only the deed of trust can be marked not found
   $("nfLabel").textContent = "Can't find the deed of trust? Mark it as not found.";
   $("nfBtn2").textContent = "Not found - deed of trust";
@@ -343,6 +359,55 @@ function selectRole(role){
   const card = $("uploadCard"); card.scrollIntoView({behavior:"smooth", block:"center"});
   card.classList.add("flash"); setTimeout(()=>card.classList.remove("flash"), 1300);
 }
+/* ---------- property taxes: read from the Tax Assessor-Collector's public search ---------- */
+const money = n => n==null ? "-" : "$"+Number(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+async function loadTaxes(){
+  const id = cur.property.id;
+  try{ const j = await api("/intake/api/property/"+id+"/taxes"); if(cur && cur.property.id===id) renderTaxes(j); }
+  catch(e){ if($("taxCard")) $("taxCard").innerHTML = '<h4 style="margin:8px 0 4px">Property taxes</h4><div class="muted">'+esc(e.message)+'</div>'; }
+}
+function renderTaxes(j){
+  const t = j.taxes, link = a => "https://bexar.acttax.com/act_webdev/bexar/showdetail2.jsp?can="+a;
+  let h = '<h4 style="margin:8px 0 4px">Property taxes <span class="muted" style="font-weight:400;font-size:12px">from the Tax Assessor-Collector</span></h4>';
+  if(j.paused_until) h += '<div class="taxwarn">Automatic lookups are paused until '+esc(j.paused_until)+' UTC, because the Tax Office site pushed back.</div>';
+  const manual = '<div class="field"><label>Know the account? Enter its 12-digit number</label><div style="display:flex;gap:8px"><input id="taxAcct" placeholder="000000000000" inputmode="numeric" style="flex:1"><button id="taxUse">Use this account</button></div></div>';
+  if(t && t.status==="ok"){
+    h += '<div class="taxrow"><span>Annual tax ('+esc(t.tax_year||"")+')</span><b>'+money(t.annual)+'</b></div>'
+      + '<div class="taxrow"><span>Back taxes owed (prior years)</span><b'+(t.back_owed>0?' class="owed"':'')+'>'+money(t.back_owed)+'</b></div>'
+      + '<div class="taxrow"><span>Total due</span><b'+(t.total_due>0?' class="owed"':'')+'>'+money(t.total_due)+'</b></div>'
+      + (t.delinquent_after ? '<div class="taxrow"><span>Delinquent after</span><span>'+esc(t.delinquent_after)+'</span></div>' : '')
+      + '<div class="taxrow"><span>Tax account</span><a href="'+esc(t.link)+'" target="_blank" rel="noopener">'+esc(t.account)+' &#8599;</a></div>'
+      + '<div class="muted" style="margin-top:6px">As of '+esc((t.as_of||"").replace("T"," ").slice(0,16))+' UTC'+(t.manual?' &middot; account chosen by staff':'')+'. Amounts include penalty and interest and change over time.</div>'
+      + (t.note ? '<div class="taxwarn">'+esc(t.note)+'</div>' : '');
+    h += '<div style="margin-top:8px"><button id="taxCheck">Check again</button></div>';
+  } else if(t && t.status==="ambiguous"){
+    h += '<div class="taxwarn">More than one account matches this address. Choose the right one:</div>'
+      + (t.candidates||[]).map(c=>'<div class="file"><div><b>'+esc(c.account)+'</b> <a href="'+esc(link(c.account))+'" target="_blank" rel="noopener">view &#8599;</a><div class="muted">'+esc(c.site_address)+' &middot; '+esc(c.legal)+'</div></div><button data-acct="'+esc(c.account)+'">Use this account</button></div>').join("")
+      + manual;
+  } else if(t && t.status==="no_match"){
+    h += '<div class="muted">No tax account was found for this address.</div>'+manual
+      + '<div style="margin-top:6px"><a href="'+esc(j.search_url)+'" target="_blank" rel="noopener">Open the Tax Office search &#8599;</a> <button id="taxCheck" style="margin-left:8px">Try again</button></div>';
+  } else if(t && t.status==="error"){
+    h += '<div class="taxwarn">The last check failed: '+esc(t.note||"unknown problem")+'</div>'+manual+'<div style="margin-top:6px"><button id="taxCheck">Try again</button></div>';
+  } else {
+    h += '<div class="muted">Not checked yet. '+(j.autorun ? 'It is checked automatically overnight, or you can check it now.' : 'Automatic checking is turned off; you can check it now.')+'</div>'
+      + '<div style="margin-top:8px"><button id="taxCheck" class="primary">Check now</button></div>';
+  }
+  if(!$("taxCard")) return;
+  $("taxCard").innerHTML = h;
+  if($("taxCheck")) $("taxCheck").onclick = ()=>taxAction("/check", null, $("taxCheck"));
+  if($("taxUse")) $("taxUse").onclick = ()=>taxAction("/account", {account:$("taxAcct").value}, $("taxUse"));
+  $("taxCard").querySelectorAll("[data-acct]").forEach(b=>b.onclick=()=>taxAction("/account", {account:b.dataset.acct}, b));
+}
+async function taxAction(tail, body, btn){
+  const id = cur.property.id, label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Checking... (a few seconds)";
+  try{
+    const r = await api("/intake/api/property/"+id+"/taxes"+tail, body ? {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)} : {method:"POST"});
+    if(cur.property.id===id) renderTaxes({taxes:r.taxes, paused_until:null, autorun:true, search_url:"https://bexar.acttax.com/act_webdev/bexar/index.jsp"});
+  }catch(e){ toast(e.message); btn.disabled = false; btn.textContent = label; loadTaxes(); }
+}
+
 /* ---------- next property ---------- */
 async function goNext(){
   const q = new URLSearchParams(lastQuery ? lastQuery.toString() : "");
@@ -360,7 +425,7 @@ function toggleEdit(id){
   if(!box.classList.contains("hidden")){ box.classList.add("hidden"); box.innerHTML = ""; return; }
   const f = cur.files.find(x=>String(x.id)===String(id)); if(!f) return;
   let h = '<b>Details read from this document</b> <span class="muted">(the PDF itself is not changed)</span>';
-  if(f.doc_role==="other_doc") h += '<div class="field"><label>Document name (required)</label><select data-ef-sub><option value="">Choose…</option>'+DOC_NAMES.map(x=>'<option value="'+x[0]+'"'+(x[0]===f.doc_subtype?" selected":"")+'>'+x[1]+'</option>').join("")+(LEGACY_NAME[f.doc_subtype] ? '<option value="'+f.doc_subtype+'" selected>'+LEGACY_NAME[f.doc_subtype]+' (older type - please choose a name)</option>' : "")+'</select></div>';
+  if(isExtra(f.doc_role)) h += '<div class="field"><label>Document name (required)</label><select data-ef-sub><option value="">Choose…</option>'+NAMES_FOR(f.doc_role).map(x=>'<option value="'+x[0]+'"'+(x[0]===f.doc_subtype?" selected":"")+'>'+x[1]+'</option>').join("")+(LEGACY_NAME[f.doc_subtype] ? '<option value="'+f.doc_subtype+'" selected>'+LEGACY_NAME[f.doc_subtype]+' (older type - please choose a name)</option>' : "")+'</select></div>';
   h += FIELDS[f.doc_role].map(x=>'<div class="field"><label>'+esc(x[1])+'</label>'+inputHtml(x, (f.fields||{})[x[0]], "data-ef", "")+'</div>').join("");
   h += '<div class="actions"><button class="primary" data-save-edit="'+id+'">Save changes</button><button data-cancel-edit="'+id+'">Cancel</button></div>';
   box.innerHTML = h; box.classList.remove("hidden");
@@ -422,7 +487,7 @@ async function onFile(){
   if(!f) return setPreview(null);
   if(f.size > 25*1024*1024){ toast("That file is over 25 MB"); $("upFile").value=""; return; }
   setPreview(f);
-  const role = $("upRole").value, expected = expectedFor(role, cur);
+  let role = $("upRole").value; const expected = expectedFor(role, cur);
   const prog = (m,p)=>{ $("ocrMsg").textContent=m; $("ocrBar").style.width=Math.round(p*100)+"%"; };
   $("ocrBox").classList.remove("hidden"); prog("Starting…",0);
   let vals = {};
@@ -435,7 +500,11 @@ async function onFile(){
     }
     const P = IntakeParse;
     vals = role==="notice" ? P.parseNotice(text) : role==="deed_of_trust" ? P.parseDeedOfTrust(text) : P.parseOtherDoc(text);
-    if(role==="other_doc" && vals.subtype && !$("upSub").value){ $("upSub").value = vals.subtype; syncRole(); }
+    if(isExtra(role) && vals.subtype){
+      const cat = TAX_NAMES.includes(vals.subtype) ? "tax_doc" : "other_doc";
+      if(cat !== role){ role = cat; $("upRole").value = cat; syncRole(); }                 // it looks like the other kind of extra document
+      if(!$("upSub").value){ $("upSub").value = vals.subtype; syncRole(); }
+    }
     $("ocrMsg").textContent = "Done reading. Please check the values below."; $("ocrBar").style.width="100%";
   }catch(e){ $("ocrMsg").textContent = "Couldn't read this PDF automatically (" + e.message + "). Type the values from the document instead."; }
   $("fieldsBox").innerHTML = fieldsHtml(role, vals, expected);
@@ -459,7 +528,7 @@ async function save(){
     let j = await api("/intake/api/property/"+cur.property.id+"/upload",{method:"POST",body:fd});
     for(const id of replaceIds){ j = await api("/intake/api/file/"+id+"/remove",{method:"POST"}); }
     renderProperty(j);
-    if(role==="other_doc"){ $("upRole").value = "other_doc"; syncRole(); }      // stay on additional documents so several can be added in a row
+    if(isExtra(role)){ $("upRole").value = role; syncRole(); }                  // stay on the same category so several can be added in a row
     toast(j.stamp_matches===0 ? "Saved - but the number did not match, please double-check" : "Saved");
     $("fieldsBox").innerHTML = "";
   }catch(e){ toast(e.message); $("saveBtn").disabled=false; $("saveBtn").textContent="Save to this property"; }
