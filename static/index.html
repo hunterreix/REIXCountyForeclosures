@@ -294,11 +294,12 @@ const FACT_LABELS = {
   stamp_doc:"Document #", stamp_date:"Recorded", sale_date:"Sale date", deed_instrument:"Deed of Trust #",
   dated:"Dated", borrower:"Grantor(s) / Borrower(s)", lender:"Lender", trustee:"DOT Lender Trustee",
   loan_number:"Loan #", maturity_date:"Loan end date (payoff date)", principal:"Original loan amount",
-  assignor:"Assignor", assignee:"Assignee", references:"Deed of Trust # it refers to", type:"Type", title:"Title"
+  assignor:"Assignor", assignee:"Assignee", references:"Deed of Trust # it refers to", type:"Type", title:"Document", lien_position:"Lien position", amount:"Amount"
 };
 function factValue(k, v){
   if(/date$|^dated$/.test(k)) return fmtDeedDate(v) || v;
-  if(k === "principal") return "$" + v;
+  if(k === "principal" || k === "amount") return "$" + v;
+  if(k === "lien_position") return v === "first" ? "1st lien" : v === "subordinate" ? "Subordinate lien" : v;
   return v;
 }
 function factTable(obj, order){
@@ -310,12 +311,12 @@ function showDocs(id){
   const f = r.doc_facts || {};
   let h = "<h3>Documents</h3><div class=\"sub\">" + escapeAttr(r.full_address || r.address || "") + " &middot; Notice #" + escapeAttr(r.doc_number) + "</div>";
   h += "<h4>Files</h4>" + r.doc_files.map(d => '<div class="docfile"><span><b>' + escapeAttr(d.title || d.label) + "</b>" + (d.subtype ? " (" + escapeAttr(d.subtype) + ")" : "") +
-        '</span><a href="' + escapeAttr(d.url) + '" target="_blank" rel="noopener">View PDF</a></div>').join("");
-  const dot = factTable(f.deed_of_trust, ["dated","stamp_doc","stamp_date","borrower","lender","trustee","loan_number","maturity_date","principal"]);
+        '</span><span><a href="' + escapeAttr(d.url) + '" target="_blank" rel="noopener">View PDF</a>' + (d.courthouse_url ? ' &nbsp;&middot;&nbsp; <a href="' + escapeAttr(d.courthouse_url) + '" target="_blank" rel="noopener">Courthouse record &#8599;</a>' : "") + '</span></div>').join("");
+  const dot = factTable(f.deed_of_trust, ["lien_position","dated","stamp_doc","stamp_date","borrower","lender","trustee","loan_number","maturity_date","principal"]);
   if(dot) h += "<h4>Deed of Trust</h4>" + dot;
   const nt = factTable(f.notice, ["sale_date","stamp_doc","deed_instrument"]);
   if(nt) h += "<h4>Foreclosure notice</h4>" + nt;
-  (f.other_docs || []).forEach(o => { const t = factTable(o, ["title","type","assignor","assignee","references","stamp_doc","principal"]); if(t) h += "<h4>Additional document</h4>" + t; });
+  (f.other_docs || []).forEach(o => { const t = factTable(o, ["title","stamp_doc","stamp_date","amount","assignor","assignee","references","principal"]); if(t) h += "<h4>Additional document</h4>" + t; });
   h += '<div class="note-small">Details were read from the recorded documents by REIX staff. Always confirm against the PDF.</div>';
   document.getElementById("docsBody").innerHTML = h;
   document.getElementById("docsModal").style.display = "flex";
