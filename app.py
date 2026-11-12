@@ -131,8 +131,7 @@ def build_filters(args):
         have = ("EXISTS (SELECT 1 FROM property_files f WHERE f.property_id = properties.id "
                 "AND f.doc_role = '{r}' AND f.status IN ({s}))")
         clauses.append(" AND ".join([have.format(r="notice", s="'uploaded'"),
-                                     have.format(r="deed_of_trust", s="'uploaded'"),
-                                     have.format(r="loan_doc", s="'uploaded','none_found'")]))
+                                     have.format(r="deed_of_trust", s="'uploaded'")]))
 
     q = args.get("q", "").strip()
     if q:
