@@ -48,7 +48,19 @@ ROLES = ("notice", "deed_of_trust")   # the required documents
 ROLE_LABELS = {"notice": "Foreclosure notice", "deed_of_trust": "Deed of Trust", "loan_doc": "Loan document",
                "other_doc": "Additional document"}
 EXTRA_ROLE = "other_doc"   # optional extra documents: any number, never required for completion
-SUBTYPES = ("assignment", "note", "lien", "release", "other")
+# Additional documents are chosen from this list (the "document name"). The old free-form types are still
+# accepted on documents that already have one, so existing data keeps working until someone edits it.
+DOC_NAMES = (("additional_deed_of_trust", "Additional Deed of Trust"), ("modification", "Modification"),
+             ("lis_pendens", "Lis Pendens"), ("judgment", "Judgment"), ("tax_lien", "Tax Lien"),
+             ("other_lien", "Other Lien"), ("affidavit", "Affidavit"), ("notice", "Notice"),
+             ("city_lien", "City Lien"), ("back_tax_report", "Back Tax Report"), ("irs_lien", "IRS Lien"),
+             ("federal_tax_lien", "Federal Tax Lien"))
+DOC_NAME_LABELS = dict(DOC_NAMES)
+LEGACY_SUBTYPES = ("assignment", "note", "lien", "release", "other")
+SUBTYPES = tuple(c for c, _ in DOC_NAMES) + LEGACY_SUBTYPES
+LIEN_POSITIONS = {"first": "1st lien", "subordinate": "Subordinate lien"}   # for the deed of trust
+# The address of a document's page on the County Clerk's site (a permanent link back to the courthouse record)
+COURTHOUSE_URL_RE = re.compile(r"https://bexar\.tx\.publicsearch\.us/doc/\d+(?:[/?#]\S*)?")
 
 CLERK_HOME = "https://bexar.tx.publicsearch.us/"
 BEXAR_NOTICE_LINK = ("https://bexar.tx.publicsearch.us/results?department=FC"
@@ -58,12 +70,13 @@ BEXAR_NOTICE_LINK = ("https://bexar.tx.publicsearch.us/results?department=FC"
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 FIELD_RULES = {
     "notice": {"stamp_doc": "num", "stamp_date": "date", "deed_instrument": "num", "deed_recorded": "date",
-               "deed_dated": "date", "borrower": "text", "lender": "text", "principal": "text", "sale_date": "date"},
+               "deed_dated": "date", "borrower": "text", "lender": "text", "principal": "text", "sale_date": "date",
+               "clerk_url": "url"},
     "deed_of_trust": {"stamp_doc": "num", "stamp_date": "date", "dated": "date", "borrower": "text",
                       "lender": "text", "trustee": "text", "loan_number": "text", "maturity_date": "date",
-                      "principal": "text"},   # trustee = "DOT Lender Trustee"; maturity_date = loan end / payoff date
+                      "principal": "text", "lien_position": "lien", "clerk_url": "url"},   # trustee = "DOT Lender Trustee"; maturity_date = loan end / payoff date
     "other_doc": {"stamp_doc": "num", "stamp_date": "date", "title": "text", "assignor": "text", "assignee": "text",
-                  "references": "num", "principal": "text", "notes": "text"},
+                  "references": "num", "principal": "text", "amount": "money", "clerk_url": "url", "notes": "text"},
 }
 
 SCHEMA = """
@@ -342,6 +355,7 @@ def _file_rows(conn, ids):
         except ValueError:
             d["fields"] = {}
         d["by"] = d.pop("by_name") or d.pop("by_email") or ""
+        d["courthouse_url"] = courthouse_url(d["doc_role"], d["doc_number"], d["fields"])
         d.pop("by_email", None)
         out.setdefault(d["property_id"], []).append(d)
     return out
@@ -441,6 +455,8 @@ def build_guidance(prop, files):
                                if inst else ["The deed of trust number was not read from the notice. Open the notice (section "
                                               "'Type of Sale') and type the number into the notice's fields, or search by the borrower's name."]) +
                               ["Confirm the result is a DEED OF TRUST recorded on the date shown, then download it and upload it here.",
+                               "On the form, choose whether it is a 1st lien or a Subordinate lien, and paste the address of the "
+                               "document's page on the Clerk's site so anyone can link back to it.",
                                "If it cannot be found, use 'Not found' and add a note."])
     elif g["complete"]:
         g.update(title="All required documents are in", lookup={},
@@ -575,8 +591,49 @@ def _clean_fields(role, raw):
             continue
         if kind == "date" and not DATE_RE.fullmatch(v):
             continue
+        if kind == "lien" and v not in LIEN_POSITIONS:
+            continue
+        if kind == "url" and not COURTHOUSE_URL_RE.fullmatch(v):
+            continue
+        if kind == "money":
+            v = v.replace("$", "").replace(" ", "")
+            if not re.fullmatch(r"(\d{1,3}(,\d{3})+|\d+)(\.\d{1,2})?", v):
+                continue
         out[k] = v
     return out
+
+
+def courthouse_url(role, doc_number, fields):
+    """Where to review the document at the courthouse: the page address staff pasted, or (for the notice, whose
+    number is the property's own) the Clerk's foreclosure search."""
+    u = (fields or {}).get("clerk_url")
+    if u:
+        return u
+    if role == "notice" and doc_number:
+        return BEXAR_NOTICE_LINK.format(doc=doc_number)
+    return None
+
+
+def _validate_document(role, subtype, fields, notice_number):
+    """The details every document must have. Returns an error message, or None when fine. Fills in what is
+    automatic: a notice's own number, and an additional document's title (its document name)."""
+    if role == "notice":
+        fields.setdefault("stamp_doc", notice_number)         # the notice's own number is already known
+    elif role == "deed_of_trust":
+        if "lien_position" not in fields:
+            return "choose the lien position: 1st lien or Subordinate lien"
+        if not fields.get("stamp_doc"):
+            return "enter the deed of trust's document number (the number stamped on it)"
+    elif role == EXTRA_ROLE:
+        if subtype not in DOC_NAME_LABELS:
+            return "choose the document name from the list"
+        fields["title"] = DOC_NAME_LABELS[subtype]
+        if subtype == "back_tax_report":                      # no document number: the amount owed is the data point
+            if not fields.get("amount"):
+                return "enter the amount owed shown on the back tax report"
+        elif not fields.get("stamp_doc"):
+            return "enter the document number (the number stamped on the document)"
+    return None
 
 
 @intake_bp.route("/intake/api/property/<int:pid>/upload", methods=["POST"])
@@ -601,14 +658,16 @@ def upload(pid):
     except ValueError:
         raw_fields = {}
     fields = _clean_fields(role, raw_fields)
-    if role == EXTRA_ROLE and not fields.get("title"):
-        return jsonify({"error": "give the additional document a short title (for example 'HOA lien')"}), 400
 
     conn = get_conn()
     prop = _property(conn, pid)
     if not prop:
         conn.close()
         return jsonify({"error": "not found"}), 404
+    err = _validate_document(role, subtype, fields, prop["doc_number"])
+    if err:
+        conn.close()
+        return jsonify({"error": err}), 400
     files = _file_rows(conn, [pid]).get(pid, [])
     expected = ""
     if role == "notice":
@@ -727,8 +786,8 @@ def get_file(fid):
 FACT_KEYS = {
     "notice": ("stamp_doc", "stamp_date", "sale_date", "deed_instrument"),
     "deed_of_trust": ("stamp_doc", "stamp_date", "dated", "borrower", "lender", "trustee",
-                      "loan_number", "maturity_date", "principal"),
-    "other_doc": ("stamp_doc", "stamp_date", "title", "assignor", "assignee", "references", "principal"),
+                      "loan_number", "maturity_date", "principal", "lien_position"),
+    "other_doc": ("stamp_doc", "stamp_date", "title", "assignor", "assignee", "references", "principal", "amount"),
 }
 
 
@@ -754,6 +813,8 @@ def attach_viewer_docs(conn, items):
             i["doc_files"].append({"id": f["id"], "role": f["doc_role"], "label": ROLE_LABELS[f["doc_role"]],
                                    "subtype": f["doc_subtype"] or None, "uploaded_at": f["uploaded_at"],
                                    "title": f["fields"].get("title") or None,
+                                   "number": f["fields"].get("stamp_doc") or None,
+                                   "courthouse_url": f.get("courthouse_url"),
                                    "url": f"/api/public/files/{f['id']}"})
             picked = {k: v for k, v in f["fields"].items() if k in FACT_KEYS[f["doc_role"]]}
             if f["doc_role"] == EXTRA_ROLE:
@@ -830,21 +891,29 @@ def update_fields(fid):
     {"fields": {...}, "doc_subtype": "assignment"}   (doc_subtype only for additional documents)"""
     b = request.get_json(silent=True) or {}
     conn = get_conn()
-    row = conn.execute("SELECT id, property_id, doc_role, doc_subtype FROM property_files WHERE id = ? AND status = 'uploaded'", (fid,)).fetchone()
+    row = conn.execute("SELECT id, property_id, doc_role, doc_subtype, fields_json FROM property_files WHERE id = ? AND status = 'uploaded'", (fid,)).fetchone()
     if not row:
         conn.close()
         return jsonify({"error": "not found"}), 404
     pid, role = row["property_id"], row["doc_role"]
     fields = _clean_fields(role, b.get("fields"))
-    if role == EXTRA_ROLE and not fields.get("title"):
-        conn.close()
-        return jsonify({"error": "give the additional document a short title (for example 'HOA lien')"}), 400
     subtype = row["doc_subtype"]
     if role == EXTRA_ROLE:                     # an additional document's type is optional
         subtype = str(b.get("doc_subtype", subtype) or "")
         if subtype and subtype not in SUBTYPES:
             conn.close()
             return jsonify({"error": "unknown document type"}), 400
+    err = _validate_document(role, subtype, fields, _property(conn, pid)["doc_number"])
+    if err:
+        conn.close()
+        return jsonify({"error": err}), 400
+    if role == EXTRA_ROLE:                     # keep an old free-form title as a note rather than losing it
+        try:
+            old_title = (json.loads(row["fields_json"] or "{}").get("title") or "").strip()
+        except ValueError:
+            old_title = ""
+        if old_title and old_title not in DOC_NAME_LABELS.values() and not fields.get("notes"):
+            fields["notes"] = old_title[:200]
     conn.execute("UPDATE property_files SET fields_json = ?, doc_subtype = ?, doc_number = ? WHERE id = ?",
                  (json.dumps(fields), subtype, fields.get("stamp_doc", ""), fid))
     _recheck_stamps(conn, pid)
