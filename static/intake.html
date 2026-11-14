@@ -51,7 +51,7 @@
   .step{cursor:pointer;} .step:hover{box-shadow:0 0 0 2px #1b1f2418;} .flash{box-shadow:0 0 0 3px rgba(15,110,92,.35);transition:box-shadow .3s;}
   .file{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px;} .file:last-child{border-bottom:none;}
   .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .2s;z-index:50;} .toast.show{opacity:1;}
-</style>
+.hist{margin-top:6px;padding-top:6px;border-top:1px dashed #d8dde3;font-size:12.5px}.histhead{font-weight:700;color:#5b6572;font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px}.histrow{padding:1px 0}</style>
 </head>
 <body>
 <header><b>REIX Document Intake</b><div class="who" id="who"></div></header>
@@ -281,16 +281,22 @@ function fileRow(f){
   const fl = f.fields || {};
   const name = isExtra(f.doc_role) ? (DOC_NAME[f.doc_subtype] || (LEGACY_NAME[f.doc_subtype] ? LEGACY_NAME[f.doc_subtype]+" (older type)" : fl.title) || "Untitled") : ROLE_LABEL[f.doc_role];
   const chk = f.stamp_matches===1?'<span class="badge ok">✓ number matches</span>':f.stamp_matches===0?'<span class="badge bad">number mismatch</span>':"";
-  if(f.status==="none_found") return '<div class="file"><div><b>'+esc(ROLE_LABEL[f.doc_role])+'</b>: marked not found<div class="muted">'+esc(f.note||"")+' · '+esc(f.by)+'</div></div><button data-rm="'+f.id+'">Undo</button></div>';
+  if(f.status==="none_found") return '<div class="file"><div><b>'+esc(ROLE_LABEL[f.doc_role])+'</b>: marked not found<div class="muted">'+esc(f.note||"")+' · '+esc(f.by)+' · '+when(f.uploaded_at)+'</div></div><button data-rm="'+f.id+'">Undo</button></div>';
   const backTax = f.doc_subtype==="back_tax_report";
   const tags = (f.doc_role==="deed_of_trust" ? (fl.lien_position ? '<span class="badge ok">'+(fl.lien_position==="first" ? "1st lien" : "Subordinate lien")+'</span>' : '<span class="badge unk">⚠ lien position missing</span>') : "")
     + (backTax ? (fl.amount ? '<span class="badge ok">owed $'+esc(fl.amount)+'</span>' : '<span class="badge unk">⚠ amount owed missing</span>') : "")
     + (f.doc_role!=="notice" && !f.doc_number && !backTax ? '<span class="badge unk">⚠ document # missing</span>' : "")
     + (isExtra(f.doc_role) && !DOC_NAME[f.doc_subtype] ? '<span class="badge unk">⚠ choose a document name</span>' : "");
   const link = f.courthouse_url ? ' <a href="'+esc(f.courthouse_url)+'" target="_blank" rel="noopener">Courthouse record &#8599;</a>' : "";
-  return '<div class="file"><div><b>'+esc(name)+'</b> '+(f.doc_number?'#'+esc(f.doc_number):"")+' '+chk+' '+tags+link+'<div class="muted">'+esc(f.original_name)+' · '+esc(f.by)+' · '+esc((f.uploaded_at||"").slice(0,10))+'</div></div>'+
-    '<div><button data-view="'+f.id+'">View</button> <button data-edit="'+f.id+'">Edit details</button> <button data-rm="'+f.id+'">Remove</button></div></div>'+
+  return '<div class="file"><div><b>'+esc(name)+'</b> '+(f.doc_number?'#'+esc(f.doc_number):"")+' '+chk+' '+tags+link+'<div class="muted">'+esc(f.original_name)+'</div></div>'+
+    '<div><button data-view="'+f.id+'">View</button> <button data-edit="'+f.id+'">Edit details</button> <button data-rm="'+f.id+'">Remove</button></div></div>'+historyHtml(f)+
     '<div class="editbox hidden" id="edit-'+f.id+'"></div>';
+}
+function when(iso){ const d = new Date((iso||"")+(/[zZ]|[+-]\d\d:?\d\d$/.test(iso||"") ? "" : "Z")); return isNaN(d) ? esc((iso||"").slice(0,16).replace("T"," ")) : esc(d.toLocaleString([], {month:"short", day:"numeric", year:"numeric", hour:"numeric", minute:"2-digit"})); }
+function historyHtml(f){
+  const hs = f.history || [];
+  if(!hs.length) return "";
+  return '<div class="hist"><div class="histhead">History</div>'+hs.map(x=>'<div class="histrow"><b>'+esc(x.by||"someone")+'</b> '+esc(x.action)+(x.detail?' ('+esc(x.detail)+')':'')+' <span class="muted">· '+when(x.at)+'</span></div>').join("")+'</div>';
 }
 // one table per kind of document; each has its own button, so any of them can be filled in at any time
 function filesHtml(d){
