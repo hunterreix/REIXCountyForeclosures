@@ -367,6 +367,24 @@ def _file_rows(conn, ids):
     return out
 
 
+def _add_history(conn, pid, files):
+    """Give each document a history: who added it and when, then each later change to its details (who, when,
+    which details). Times are UTC; the page shows them in the viewer's own time zone."""
+    edits = {}
+    for r in conn.execute(
+            """SELECT l.at, l.detail, COALESCE(NULLIF(u.name,''), u.email, '') AS who
+               FROM intake_log l LEFT JOIN intake_users u ON u.id = l.user_id
+               WHERE l.property_id = ? AND l.action = 'edit_details' ORDER BY l.id""", (pid,)).fetchall():
+        m = re.match(r"file (\d+) \(", r["detail"] or "")
+        if m:
+            ch = re.search(r"changed: (.*)$", r["detail"] or "")
+            edits.setdefault(int(m.group(1)), []).append(
+                {"at": r["at"], "by": r["who"], "action": "edited", "detail": ch.group(1) if ch else ""})
+    for f in files:
+        first = "marked not found" if f["status"] == "none_found" else "added"
+        f["history"] = [{"at": f["uploaded_at"], "by": f["by"], "action": first, "detail": ""}] + edits.get(f["id"], [])
+
+
 def _role_state(files, role):
     fs = [f for f in files if f["doc_role"] == role]
     if any(f["status"] == "uploaded" for f in fs):
@@ -583,6 +601,7 @@ def _detail(conn, pid):
     if not prop:
         return None
     files = _file_rows(conn, [pid]).get(pid, [])
+    _add_history(conn, pid, files)
     return {"property": dict(prop), "files": files, "guidance": build_guidance(dict(prop), files)}
 
 
@@ -732,7 +751,7 @@ def upload(pid):
     conn.commit()
     d = _detail(conn, pid)
     conn.close()
-    _log(uid, pid, "upload", f"{role} {stamp} match={matches}")
+    _log(uid, pid, "upload", f"file {cur.lastrowid} ({role}) {stamp} match={matches}")
     d["stamp_matches"] = matches
     return jsonify(d)
 
@@ -937,6 +956,13 @@ def update_fields(fid):
             old_title = ""
         if old_title and old_title not in DOC_NAME_LABELS.values() and not fields.get("notes"):
             fields["notes"] = old_title[:200]
+    try:
+        before = json.loads(row["fields_json"] or "{}")
+    except ValueError:
+        before = {}
+    changed = sorted(k for k in set(before) | set(fields) if k != "title" and before.get(k, "") != fields.get(k, ""))
+    if subtype != row["doc_subtype"]:
+        changed.append("document name")
     conn.execute("UPDATE property_files SET fields_json = ?, doc_subtype = ?, doc_number = ? WHERE id = ?",
                  (json.dumps(fields), subtype, fields.get("stamp_doc", ""), fid))
     _recheck_stamps(conn, pid)
@@ -946,5 +972,6 @@ def update_fields(fid):
     conn.commit()
     d = _detail(conn, pid)
     conn.close()
-    _log(request.intake_user["id"], pid, "edit_details", f"file {fid} ({role})")
+    _log(request.intake_user["id"], pid, "edit_details",
+         f"file {fid} ({role}) changed: " + ", ".join(c.replace("_", " ") for c in changed))
     return jsonify(d)
