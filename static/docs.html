@@ -72,7 +72,7 @@ curl -b jar.txt -X POST https://YOUR-DOMAIN/api/v1/keys \
     <tr><td><span class="badge">GET</span>/api/v1/changes?after=&lt;cursor&gt;</td><td>What changed since your last check (new notices, new or removed documents). Every property has a stable <code>property_key</code>; documents may arrive days after the property.</td></tr>
     <tr><td><span class="badge">GET</span>/api/v1/lists</td><td>The monthly lists: every sale month with its counts (total, confirmed, provisional, documents complete)</td></tr>
     <tr><td><span class="badge">GET</span>/api/v1/lists/&lt;YYYY-MM&gt;</td><td>One monthly list: all notices for that sale month, paged. Add <code>?format=csv</code> for the whole month as a CSV file. A notice has a <code>sale_date</code> once it is confirmed from the notice document; until then it is placed by the county filing cycle (<code>list_basis</code>: <code>county_cycle</code>) and may move to another month.</td></tr>
-    <tr><td><span class="badge">GET</span>/api/v1/properties/&lt;property_key&gt;/documents</td><td>Every document on file for a property (notice, deed of trust, additional and tax documents) with what was read from each. Needs the <code>documents</code> permission on your key.</td></tr>
+    <tr><td><span class="badge">GET</span>/api/v1/properties/&lt;property_key&gt;/documents</td><td>Every document on file for a property (notice, deed of trust, additional and tax documents) with what was read from each. Needs the <code>documents</code> permission on your key; without it the answer is a 403 error, not an empty list.</td></tr>
     <tr><td><span class="badge">GET</span>/api/v1/files/&lt;file_id&gt;</td><td>The PDF of one document. Needs the <code>documents</code> permission.</td></tr>
     <tr><td><span class="badge">POST</span>/api/v1/keys</td><td>Create an API key (signed-in account required)</td></tr>
   </table>
@@ -129,6 +129,10 @@ curl -b jar.txt -X POST https://YOUR-DOMAIN/api/v1/keys \
   "total_pages": 33
 }</pre>
 
+  <div class="note"><b>Two different document lists.</b> <code>documents</code> (above) only holds documents our system matched
+  automatically on the Clerk's site, so it is often empty. The notice and deed of trust that our staff upload are listed in
+  <code>uploaded_documents</code> and summarised by <code>docs_status</code>: see section 6.</div>
+
   <div class="note"><b>doc_link</b> is the direct link to the recorded foreclosure notice on the County Clerk's
   site once we have matched it (<code>doc_link_is_direct: true</code>). Until then it points to the Clerk's
   search home page (<code>false</code>). <code>documents</code> lists every linked courthouse document.</div>
@@ -140,6 +144,7 @@ curl -b jar.txt -X POST https://YOUR-DOMAIN/api/v1/keys \
     <tr><th>Field</th><th>Meaning</th></tr>
     <tr><td>property_key</td><td>Stable id for the notice, e.g. <code>bexar-mortgage-20261000380</code>. Never changes.</td></tr>
     <tr><td>details_hash</td><td>A short code that changes whenever anything about the property changes (address, sale date, lien position, back taxes, tax figures, any document or what was read from it). Store it; if it differs next time, read the property again.</td></tr>
+    <tr><td>uploaded_documents</td><td>Every document our staff uploaded for the property (notice, deed of trust, additional and tax documents): <code>file_id</code>, <code>role</code>, <code>document_name</code>, <code>doc_number</code>, <code>courthouse_url</code>. No PDFs or extracted details here; use the documents endpoint for those. This is the list that matches <code>docs_status</code>.</td></tr>
     <tr><td>docs_status</td><td><code>notice</code> and <code>deed_of_trust</code>, each <code>missing</code>, <code>done</code> or <code>none_found</code></td></tr>
     <tr><td>docs_complete</td><td><code>true</code> when the notice and the deed of trust are both on file</td></tr>
     <tr><td>lien_position</td><td><code>first</code> or <code>subordinate</code>, from the deed of trust</td></tr>
