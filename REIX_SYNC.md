@@ -35,6 +35,7 @@ This is for whoever builds the app.reix.co side.
 | `deeds_updated` | ownership-transfer history (from the appraisal district) was added or changed |
 | `document_updated` | staff corrected the details read from a document (loan #, dates, names...). The PDF is unchanged: re-read `facts` from the documents endpoint (`file_id` says which) |
 | `taxes_updated` | the property's tax figures were read for the first time or changed; `detail` has `taxes_annual`, `taxes_back_owed`, `taxes_total_due` |
+| `property_updated` | the county corrected the property's own details (address, city, zip, coordinates, list month...). `detail` is `{"fields": ["address"]}`. Re-read the property with `/api/v1/properties?property_key=` |
 | `sale_date_set` | the notice's real sale date was confirmed (or withdrawn), which can move it to another monthly list. `detail` says which: `{"sale_date", "list_month", "previous_list_month"}` |
 
 ## Monthly lists (how notices are grouped)
@@ -115,7 +116,7 @@ Staff can attach any number of extra documents to a property (liens, HOA or tax 
 - They appear in the documents list with `"role": "other_doc"` and a `facts.title` such as "HOA lien". They download
   like any other file.
 - They **never** change `docs_status` (it has exactly `notice` and `deed_of_trust`) or `docs_complete`.
-- Every property record carries `docs_extra`, the number of additional documents on file.
+- Every property record carries `docs_extra` (additional documents on file), `docs_tax` (tax documents on file) and `additional_document_names` (both kinds, by name).
 - Each upload is a `document_added` event, and a removal is `document_removed`, exactly like the required documents.
 - The Deed of Trust facts now include `loan_number` and `maturity_date` (the loan end / payoff date); `trustee` is the
   "DOT Lender Trustee"; and `borrower` is the Grantor(s) / Borrower(s) named on the deed of trust.
@@ -179,3 +180,14 @@ account page), `taxes_annual` and `taxes_year`, `taxes_back_owed` (prior years),
 Amounts include penalty and interest and change over time, so treat `taxes_as_of` as part of the value. The monthly CSVs have
 `tax_account`, `taxes_annual`, `taxes_back_owed`, `taxes_total_due`, `taxes_as_of` columns. A `taxes_updated` event is
 published when figures are new or change.
+
+
+## Rolling updates and the double-check
+
+Everything arrives on a rolling basis: documents any time after the address, the nightly tax refresh (an event only when figures change), and county corrections. Three layers make sure REIX never falls behind:
+
+1. **The change feed** (`/api/v1/changes`) announces each change once. Follow it with a saved cursor.
+2. **The fingerprint**: every property record, and the documents endpoint, carries `details_hash`, a short code that changes whenever anything shown for the property changes (address, sale date, lien position, back taxes and tax figures, any document or what was read from it). Store it with the property. On a daily sweep of `/api/v1/properties` (paged), any property whose `details_hash` differs from the stored one gets pulled again. This catches anything the feed missed, a lost cursor included.
+3. **The checker** runs on our side every 6 hours (`SYNC_CHECK_HOURS`) and on demand (`POST /internal/sync/check` with the `X-Sync-Secret` header). It announces anything on file that the feed never announced. It returns `{"ok": true}` when nothing was missing.
+
+**Additional documents** (liens, judgments, modifications, tax papers...) appear on each property as `additional_document_names` (for example `["Lis Pendens", "Back Tax Report"]`, in the order added), with the counts `docs_extra` and `docs_tax`. The documents endpoint lists them in `additional_documents`, each with `document_name`, `doc_number`, `courthouse_url`, `amount_owed` (back tax report) and `download_url`.
