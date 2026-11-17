@@ -26,6 +26,7 @@ from flask import Blueprint, jsonify, request, send_file
 from db import get_conn
 from events import changes_after, parse_key, property_key
 from intake import DOCS_DIR, DOC_NAME_LABELS, ROLES, ROLE_LABELS, courthouse_url
+from syncheck import fingerprints, reconcile
 from taxes import EMPTY_TAX_FIELDS, api_fields_map
 
 sync_bp = Blueprint("sync_api", __name__)
@@ -66,16 +67,18 @@ def attach_status(conn, items):
         i["docs_status"] = {r: "missing" for r in ROLES}
         i["docs_extra"] = 0                      # optional additional documents on file
         i["docs_tax"] = 0                        # optional tax documents on file (back tax report, tax liens)
+        i["additional_document_names"] = []      # e.g. ["Lis Pendens", "Judgment"], in the order they were added
         i["lien_position"] = None                # "first" or "subordinate", from the deed of trust
         i["back_tax_amount_owed"] = None         # from the back tax report, if there is one
     if ids:
         marks = ",".join("?" * len(ids))
         by_id = {i["id"]: i for i in items}
-        for r in conn.execute(f"SELECT property_id, doc_role, status FROM property_files "
-                              f"WHERE property_id IN ({marks}) AND status != 'removed'", ids).fetchall():
+        for r in conn.execute(f"SELECT property_id, doc_role, doc_subtype, status FROM property_files "
+                              f"WHERE property_id IN ({marks}) AND status != 'removed' ORDER BY id", ids).fetchall():
             if r["doc_role"] not in ROLES:       # additional documents are counted, not part of the status
                 if r["status"] == "uploaded":
                     by_id[r["property_id"]]["docs_tax" if r["doc_role"] == "tax_doc" else "docs_extra"] += 1
+                    by_id[r["property_id"]]["additional_document_names"].append(DOC_NAME_LABELS.get(r["doc_subtype"]) or "Other")
                 continue
             st = by_id[r["property_id"]]["docs_status"]
             if r["status"] == "uploaded":
@@ -98,7 +101,9 @@ def attach_status(conn, items):
             else:
                 by_id[r["property_id"]]["back_tax_amount_owed"] = f.get("amount")
     taxes = api_fields_map(conn, ids)                  # annual tax, back taxes, total due (see taxes.py)
+    prints = fingerprints(conn, ids)                   # changes whenever anything shown for the property changes
     for i in items:
+        i["details_hash"] = prints.get(i["id"])
         i.update(taxes.get(i["id"]) or EMPTY_TAX_FIELDS)
         s = i["docs_status"]
         i["docs_complete"] = s["notice"] == "done" and s["deed_of_trust"] == "done"
@@ -167,8 +172,17 @@ def property_documents(key):
                     "facts": fields, "size_bytes": f["size_bytes"], "sha256": f["sha256"] or None,
                     "note": f["note"] or None, "uploaded_at": f["uploaded_at"],
                     "download_url": f"/api/v1/files/{f['id']}" if f["status"] == "uploaded" else None})
+    conn = get_conn()
+    dh = fingerprints(conn, [prop["id"]]).get(prop["id"])
+    conn.close()
+    extras = [x for x in out if x["role"] not in ROLES and x["status"] == "uploaded"]
     return jsonify({"property_key": property_key(prop["county"], prop["source_layer"], prop["doc_number"]),
-                    "docs_status": status, "files": out})
+                    "details_hash": dh, "docs_status": status,
+                    "additional_documents": [{"file_id": x["file_id"], "category": "tax" if x["role"] == "tax_doc" else "additional",
+                                              "document_name": x["document_name"], "doc_number": x["doc_number"],
+                                              "courthouse_url": x["courthouse_url"], "amount_owed": (x["facts"] or {}).get("amount"),
+                                              "uploaded_at": x["uploaded_at"], "download_url": x["download_url"]} for x in extras],
+                    "files": out})
 
 
 @sync_bp.route("/api/v1/files/<int:fid>")
@@ -191,6 +205,18 @@ def download_file(fid):
 
 
 # ------------------------------------------------------------------ admin endpoints
+
+@sync_bp.route("/internal/sync/check", methods=["POST"])
+def sync_check():
+    """Run the checker now: announces anything on file that the change feed never announced."""
+    if not _secret_ok():
+        return jsonify({"error": "forbidden"}), 403
+    conn = get_conn()
+    try:
+        return jsonify(reconcile(conn))
+    finally:
+        conn.close()
+
 
 @sync_bp.route("/internal/api-keys")
 def list_keys():
