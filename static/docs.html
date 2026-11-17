@@ -72,6 +72,8 @@ curl -b jar.txt -X POST https://YOUR-DOMAIN/api/v1/keys \
     <tr><td><span class="badge">GET</span>/api/v1/changes?after=&lt;cursor&gt;</td><td>What changed since your last check (new notices, new or removed documents). Every property has a stable <code>property_key</code>; documents may arrive days after the property.</td></tr>
     <tr><td><span class="badge">GET</span>/api/v1/lists</td><td>The monthly lists: every sale month with its counts (total, confirmed, provisional, documents complete)</td></tr>
     <tr><td><span class="badge">GET</span>/api/v1/lists/&lt;YYYY-MM&gt;</td><td>One monthly list: all notices for that sale month, paged. Add <code>?format=csv</code> for the whole month as a CSV file. A notice has a <code>sale_date</code> once it is confirmed from the notice document; until then it is placed by the county filing cycle (<code>list_basis</code>: <code>county_cycle</code>) and may move to another month.</td></tr>
+    <tr><td><span class="badge">GET</span>/api/v1/properties/&lt;property_key&gt;/documents</td><td>Every document on file for a property (notice, deed of trust, additional and tax documents) with what was read from each. Needs the <code>documents</code> permission on your key.</td></tr>
+    <tr><td><span class="badge">GET</span>/api/v1/files/&lt;file_id&gt;</td><td>The PDF of one document. Needs the <code>documents</code> permission.</td></tr>
     <tr><td><span class="badge">POST</span>/api/v1/keys</td><td>Create an API key (signed-in account required)</td></tr>
   </table>
 
@@ -131,7 +133,72 @@ curl -b jar.txt -X POST https://YOUR-DOMAIN/api/v1/keys \
   site once we have matched it (<code>doc_link_is_direct: true</code>). Until then it points to the Clerk's
   search home page (<code>false</code>). <code>documents</code> lists every linked courthouse document.</div>
 
-  <h2>6. Attribution &amp; fair use</h2>
+  <h2>6. What is added to a property after the notice</h2>
+  <p>A property is announced first, with its address. Documents and tax figures are gathered afterwards, so these
+  fields fill in over time. The property record always shows the latest.</p>
+  <table>
+    <tr><th>Field</th><th>Meaning</th></tr>
+    <tr><td>property_key</td><td>Stable id for the notice, e.g. <code>bexar-mortgage-20261000380</code>. Never changes.</td></tr>
+    <tr><td>details_hash</td><td>A short code that changes whenever anything about the property changes (address, sale date, lien position, back taxes, tax figures, any document or what was read from it). Store it; if it differs next time, read the property again.</td></tr>
+    <tr><td>docs_status</td><td><code>notice</code> and <code>deed_of_trust</code>, each <code>missing</code>, <code>done</code> or <code>none_found</code></td></tr>
+    <tr><td>docs_complete</td><td><code>true</code> when the notice and the deed of trust are both on file</td></tr>
+    <tr><td>lien_position</td><td><code>first</code> or <code>subordinate</code>, from the deed of trust</td></tr>
+    <tr><td>docs_extra</td><td>Number of additional documents on file (modifications, liens, judgments, affidavits...)</td></tr>
+    <tr><td>docs_tax</td><td>Number of tax documents on file (back tax report, tax lien, IRS or federal tax lien)</td></tr>
+    <tr><td>additional_document_names</td><td>Names of the additional and tax documents, in the order added, e.g. <code>["Lis Pendens", "Back Tax Report"]</code></td></tr>
+    <tr><td>back_tax_amount_owed</td><td>Amount owed from the back tax report, if there is one</td></tr>
+    <tr><td>taxes_annual, taxes_back_owed, taxes_current_due, taxes_total_due, taxes_year</td><td>Property taxes read from the Bexar County Tax Office (annual tax, back taxes, total due). Empty until checked.</td></tr>
+    <tr><td>taxes_delinquent_after, taxes_as_of, tax_status, tax_account, tax_link</td><td>When the taxes become delinquent, the date the figures were read, the lookup status, and a link to the Tax Office record</td></tr>
+    <tr><td>sale_date</td><td>The confirmed sale date, once read from the notice. Until then the notice sits in the list for its county filing cycle.</td></tr>
+  </table>
+
+  <h2>7. Documents, in detail</h2>
+  <p><code>GET /api/v1/properties/&lt;property_key&gt;/documents</code> returns <code>details_hash</code>, <code>docs_status</code>,
+  every file, and a separate <code>additional_documents</code> list:</p>
+  <pre>{
+  "property_key": "bexar-mortgage-20261000380",
+  "details_hash": "4a7db3e4d61adb77",
+  "docs_status": {"notice": "done", "deed_of_trust": "done"},
+  "additional_documents": [
+    {"file_id": 14, "category": "additional", "document_name": "Lis Pendens", "doc_number": "20260000099",
+     "courthouse_url": "https://bexar.tx.publicsearch.us/doc/123", "amount_owed": null,
+     "uploaded_at": "2026-11-12T15:02:11", "download_url": "/api/v1/files/14"},
+    {"file_id": 15, "category": "tax", "document_name": "Back Tax Report", "doc_number": null,
+     "courthouse_url": null, "amount_owed": "5000.00", "uploaded_at": "2026-11-12T15:20:40",
+     "download_url": "/api/v1/files/15"}
+  ],
+  "files": [ ... every document, with role, subtype, facts, sha256 ... ]
+}</pre>
+  <ul>
+    <li>Additional document names: Additional Deed of Trust, Modification (most recent), Lis Pendens, Judgment, Other Lien, Affidavit, Notice, City Lien.</li>
+    <li>Tax document names: Back Tax Report, Tax Lien, IRS Lien, Federal Tax Lien. A back tax report carries <code>amount_owed</code> instead of a document number.</li>
+    <li><code>courthouse_url</code> links back to the document on the County Clerk's site so anyone can review it.</li>
+    <li>Additional and tax documents never change <code>docs_status</code> or <code>docs_complete</code>.</li>
+    <li>A file is identified by <code>file_id</code> and <code>sha256</code>. A replaced document appears as a removal of the old file and an addition of the new one, so make your import repeatable.</li>
+    <li>What was read from a document (<code>facts</code>) is confirmed by a person and may include names and loan amounts. Treat it as sensitive.</li>
+  </ul>
+
+  <h2>8. Keeping up with changes</h2>
+  <p>Call <code>GET /api/v1/changes?after=&lt;cursor&gt;</code>, save the <code>next_after</code> it returns, and call again later.
+  Each event has an <code>id</code>, a <code>type</code>, the <code>property_key</code> and, for documents, a <code>file_id</code>.</p>
+  <table>
+    <tr><th>Event type</th><th>What to do</th></tr>
+    <tr><td>property_added</td><td>A new notice. Read it with <code>/api/v1/properties?property_key=</code>.</td></tr>
+    <tr><td>property_updated</td><td>The county corrected the property's details. <code>detail.fields</code> says which (e.g. address). Read the property again.</td></tr>
+    <tr><td>document_added</td><td>A document arrived (may be days after the property). Read the documents endpoint.</td></tr>
+    <tr><td>document_updated</td><td>Staff corrected what was read from a document. Read the documents endpoint.</td></tr>
+    <tr><td>document_removed</td><td>A document was removed or replaced. Stop using that <code>file_id</code>.</td></tr>
+    <tr><td>document_none_found</td><td>Someone searched and could not find the deed of trust.</td></tr>
+    <tr><td>taxes_updated</td><td>Tax figures were read or changed. <code>detail</code> has <code>taxes_annual</code>, <code>taxes_back_owed</code>, <code>taxes_total_due</code>. Tax figures are refreshed on a rolling basis, and an event is sent only when they change.</td></tr>
+    <tr><td>sale_date_set</td><td>The real sale date was confirmed, which may move the notice to another monthly list.</td></tr>
+    <tr><td>deeds_updated</td><td>Ownership-transfer history was added or changed.</td></tr>
+  </table>
+  <div class="note"><b>Double-check:</b> once a day, page through <code>/api/v1/properties</code> and compare each
+  <code>details_hash</code> with the one you stored. A different value means something changed: read that property again.
+  This catches anything missed, even if you lost your place in the change feed. We also run our own check every few hours
+  and announce anything on file that was never announced.</div>
+
+  <h2>9. Attribution &amp; fair use</h2>
   <p>This feed is a convenience layer on top of Bexar County's public foreclosure notice data.
   It's provided for informational and lead-generation purposes, not as a substitute for the official
   County Clerk record. If you build something with it, a link back to
