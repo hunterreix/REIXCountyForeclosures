@@ -9,6 +9,7 @@ Run:
 """
 import argparse
 import datetime as dt
+import json
 import sys
 import time
 
@@ -17,17 +18,30 @@ from events import log_event
 from sources.registry import ENABLED_SOURCES
 
 
+def _same(old, new):
+    if isinstance(old, float) or isinstance(new, float):
+        try:
+            return round(float(old), 6) == round(float(new), 6)
+        except (TypeError, ValueError):
+            return old == new
+    return (old or "") == (new or "") if isinstance(old, str) or isinstance(new, str) else old == new
+
+
 def upsert_records(conn, records) -> tuple[int, int]:
     now = dt.datetime.utcnow().isoformat()
     inserted, updated = 0, 0
 
     for r in records:
         existing = conn.execute(
-            "SELECT id FROM properties WHERE county = ? AND doc_number = ? AND source_layer = ?",
+            "SELECT id, address, city, zip, school_dist, year, month, lat, lon, doc_link FROM properties "
+            "WHERE county = ? AND doc_number = ? AND source_layer = ?",
             (r.county, r.doc_number, r.source_layer),
         ).fetchone()
 
         if existing:
+            new = {"address": r.address, "city": r.city, "zip": r.zip, "school_dist": r.school_dist, "year": r.year,
+                   "month": r.month, "lat": r.lat, "lon": r.lon, "doc_link": r.doc_link}
+            changed = [k for k, v in new.items() if not _same(existing[k], v)]
             conn.execute(
                 """UPDATE properties SET
                     address=?, city=?, zip=?, school_dist=?, year=?, month=?,
@@ -37,6 +51,8 @@ def upsert_records(conn, records) -> tuple[int, int]:
                  r.lat, r.lon, r.doc_link, now, existing["id"]),
             )
             updated += 1
+            if changed:                                    # lets the REIX app learn the county corrected something
+                log_event(conn, existing["id"], "property_updated", None, json.dumps({"fields": changed}))
         else:
             cur = conn.execute(
                 """INSERT INTO properties
