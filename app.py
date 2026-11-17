@@ -38,6 +38,8 @@ init_intake(app)
 from sync_api import sync_bp, attach_status  # noqa: E402
 from events import log_event  # noqa: E402
 app.register_blueprint(sync_bp)
+from syncheck import start_checker  # noqa: E402
+start_checker()
 
 # Property taxes from the Tax Assessor-Collector's public search (nightly, gentle, can be switched off) - see taxes.py
 from taxes import taxes_bp, init_taxes  # noqa: E402
