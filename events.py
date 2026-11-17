@@ -8,8 +8,8 @@ gathered by a person and uploaded hours or days later. The partner app needs to
 told when something about it changed. Every event has an increasing id, which the
 partner stores as its cursor and passes back as ?after=<id>.
 
-Event types: property_added, document_added, document_removed,
-             document_none_found, deeds_updated
+Event types: property_added, property_updated, document_added, document_updated, document_removed,
+             document_none_found, deeds_updated, taxes_updated, sale_date_set
 """
 import datetime as dt
 import json
@@ -56,7 +56,7 @@ def parse_key(key):
 def _detail(r):
     """sale_date_set events say which monthly list the notice is now in (and which it came from);
     taxes_updated events carry the new tax figures."""
-    if r["event_type"] not in ("sale_date_set", "taxes_updated"):
+    if r["event_type"] not in ("sale_date_set", "taxes_updated", "property_updated"):
         return None
     try:
         return json.loads(r["detail"])
