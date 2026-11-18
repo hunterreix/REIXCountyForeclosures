@@ -144,6 +144,7 @@ curl -b jar.txt -X POST https://YOUR-DOMAIN/api/v1/keys \
     <tr><th>Field</th><th>Meaning</th></tr>
     <tr><td>property_key</td><td>Stable id for the notice, e.g. <code>bexar-mortgage-20261000380</code>. Never changes.</td></tr>
     <tr><td>details_hash</td><td>A short code that changes whenever anything about the property changes (address, sale date, lien position, back taxes, tax figures, any document or what was read from it). Store it; if it differs next time, read the property again.</td></tr>
+    <tr><td>notice_doc_number, deed_of_trust_doc_number</td><td>The courthouse document number of the notice and of the deed of trust. The notice number is always present. The deed of trust number is the one entered with the deed upload, or, if that was left blank, the deed instrument number read from the notice; it is null until one of those exists.</td></tr>
     <tr><td>uploaded_documents</td><td>Every document our staff uploaded for the property (notice, deed of trust, additional and tax documents): <code>file_id</code>, <code>role</code>, <code>document_name</code>, <code>doc_number</code>, <code>courthouse_url</code>. No PDFs or extracted details here; use the documents endpoint for those. This is the list that matches <code>docs_status</code>.</td></tr>
     <tr><td>docs_status</td><td><code>notice</code> and <code>deed_of_trust</code>, each <code>missing</code>, <code>done</code> or <code>none_found</code></td></tr>
     <tr><td>docs_complete</td><td><code>true</code> when the notice and the deed of trust are both on file</td></tr>
