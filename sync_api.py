@@ -69,6 +69,8 @@ def attach_status(conn, items):
         i["docs_tax"] = 0                        # optional tax documents on file (back tax report, tax liens)
         i["additional_document_names"] = []      # e.g. ["Lis Pendens", "Judgment"], in the order they were added
         i["uploaded_documents"] = []             # every document our staff uploaded: name, number, courthouse link (no PDFs, no facts)
+        i["notice_doc_number"] = i["doc_number"]  # the notice's own number (a notice file's number, if one was uploaded)
+        i["deed_of_trust_doc_number"] = None     # from the deed upload, else the deed instrument read from the notice
         i["lien_position"] = None                # "first" or "subordinate", from the deed of trust
         i["back_tax_amount_owed"] = None         # from the back tax report, if there is one
     if ids:
@@ -104,16 +106,27 @@ def attach_status(conn, items):
     if ids:
         marks = ",".join("?" * len(ids))
         by_id = {i["id"]: i for i in items}
+        notice_deed = {}
         for r in conn.execute(f"SELECT id, property_id, doc_role, doc_subtype, doc_number, fields_json FROM property_files "
                               f"WHERE property_id IN ({marks}) AND status = 'uploaded' ORDER BY id", ids).fetchall():
             try:
                 f = json.loads(r["fields_json"] or "{}")
             except ValueError:
                 f = {}
+            it = by_id[r["property_id"]]
+            if r["doc_role"] == "notice":
+                it["notice_doc_number"] = r["doc_number"] or it["notice_doc_number"]
+                if f.get("deed_instrument"):
+                    notice_deed[r["property_id"]] = f["deed_instrument"]
+            elif r["doc_role"] == "deed_of_trust" and r["doc_number"]:
+                it["deed_of_trust_doc_number"] = r["doc_number"]
             name = ROLE_LABELS.get(r["doc_role"]) if r["doc_role"] in ROLES else (DOC_NAME_LABELS.get(r["doc_subtype"]) or "Other")
             by_id[r["property_id"]]["uploaded_documents"].append(
                 {"file_id": r["id"], "role": r["doc_role"], "document_name": name, "doc_number": r["doc_number"] or None,
                  "courthouse_url": courthouse_url(r["doc_role"], r["doc_number"], f)})
+        for pid, inst in notice_deed.items():            # no number on the deed upload: use the one the notice names
+            if not by_id[pid]["deed_of_trust_doc_number"]:
+                by_id[pid]["deed_of_trust_doc_number"] = inst
     taxes = api_fields_map(conn, ids)                  # annual tax, back taxes, total due (see taxes.py)
     prints = fingerprints(conn, ids)                   # changes whenever anything shown for the property changes
     for i in items:
